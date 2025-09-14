@@ -1,4 +1,4 @@
-#include "rendertarget.h"
+#include "yuv.h"
 
 #include <iostream>
 
@@ -44,16 +44,23 @@ namespace {
 			}
 		)";
 
-		// 			#layout(location = 0) out vec4 frag_rgba;
-		//			#layout(location = 1) out vec3 frag_norm;
+		// https://en.wikipedia.org/wiki/Y%E2%80%B2UV
+
 		const char* frag_src = R"(
 			#version 330 core
 			uniform sampler2D tex0;
 			in vec2 uv;
-			layout(location = 0) out vec3 color;
+			layout(location = 0) out vec3 color[3];
 
 			void main() {
-				color = texture(tex0, uv).xyz;
+				mat3 m;
+				m[0] = vec3(0.299, -0.14713, 0.615);
+				m[1] = vec3(0.587, -0.28886, -0.51499);
+				m[2] = vec3(0.114, 0.436, -0.10001);
+				vec3 yuv = m * texture(tex0, uv).xyz;
+				color[0] = vec3(yuv.x);
+				color[1] = vec3(yuv.y);
+				color[2] = vec3(yuv.z);
 			}
 		)";
 		
@@ -96,12 +103,12 @@ namespace {
 	}
 }
 
-RenderTarget::~RenderTarget()
+yuv::~yuv()
 {
 	Free();
 }
 
-bool RenderTarget::init(GLsizei width, GLsizei height)
+bool yuv::init(GLsizei width, GLsizei height)
 {
 	if (fbo > 0) {
 		return false;
@@ -114,15 +121,19 @@ bool RenderTarget::init(GLsizei width, GLsizei height)
 	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 	checkError();
 
-	glGenTextures(1, &tex);
-	glBindTexture(GL_TEXTURE_2D, tex);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height, 
-		0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-	glGenerateTextureMipmap(tex);
-	checkError();
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	checkError();
+	glGenTextures(channels, &tex[0]);
+
+	for (int i = 0; i < channels; i++) {
+		glBindTexture(GL_TEXTURE_2D, tex[i]);
+		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGB, width, height,
+			0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
+
+		checkError();
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+		checkError();
+	}
+
 	glBindTexture(GL_TEXTURE_2D, 0);
 
 	glGenRenderbuffers(1, &depth);
@@ -133,11 +144,13 @@ bool RenderTarget::init(GLsizei width, GLsizei height)
 		GL_RENDERBUFFER, depth);
 	checkError();
 
-	glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex[0], 0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT1, GL_TEXTURE_2D, tex[1], 0);
+	glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT2, GL_TEXTURE_2D, tex[2], 0);
 	checkError();
 
-	GLenum DrawBuffers[1]{ GL_COLOR_ATTACHMENT0 };
-	glDrawBuffers(1, DrawBuffers);
+	GLenum DrawBuffers[]{ GL_COLOR_ATTACHMENT0, GL_COLOR_ATTACHMENT1, GL_COLOR_ATTACHMENT2 };
+	glDrawBuffers(channels, DrawBuffers);
 	checkError();
 
 	auto status = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
@@ -160,7 +173,7 @@ bool RenderTarget::init(GLsizei width, GLsizei height)
 	return status == GL_FRAMEBUFFER_COMPLETE && InitTextureToScreen();
 }
 
-void RenderTarget::Begin()
+void yuv::Begin()
 {
 	if (fbo == 0) {
 		return;
@@ -170,7 +183,7 @@ void RenderTarget::Begin()
 	glViewport(0, 0, width, height);
 }
 
-void RenderTarget::End()
+void yuv::End()
 {
 	if (fbo == 0) {
 		return;
@@ -179,7 +192,7 @@ void RenderTarget::End()
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
-void RenderTarget::RenderTexture(int width, int height, GLuint texture)
+void yuv::RenderTexture(int width, int height, int channel)
 {
 	glViewport(0, 0, width, height);
 	
@@ -188,7 +201,7 @@ void RenderTarget::RenderTexture(int width, int height, GLuint texture)
 	checkError();
 	GLuint texLoc = glGetUniformLocation(program_id, "tex0");
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, texture == 0 ? tex : texture);
+	glBindTexture(GL_TEXTURE_2D, channel);
 	glUniform1i(texLoc, 0);
 
 	glBindVertexArray(quad_vert_arr_id);
@@ -198,7 +211,22 @@ void RenderTarget::RenderTexture(int width, int height, GLuint texture)
 	glUseProgram(0);
 }
 
-bool RenderTarget::InitTextureToScreen()
+void yuv::ConvertToYUV(GLuint sourceTexture) const
+{
+	glViewport(0, 0, width, height);
+	glUseProgram(program_id);
+	GLuint texLoc = glGetUniformLocation(program_id, "tex0");
+	glActiveTexture(GL_TEXTURE0);
+	glBindTexture(GL_TEXTURE_2D, sourceTexture);
+	glUniform1i(texLoc, 0);
+	glBindVertexArray(quad_vert_arr_id);
+	glDrawArrays(GL_TRIANGLES, 0, 6);
+	glBindVertexArray(0);
+	glBindTexture(GL_TEXTURE_2D, 0);
+	glUseProgram(0);
+}
+
+bool yuv::InitTextureToScreen()
 {
 	// The fullscreen quad's FBO
 	glGenVertexArrays(1, &quad_vert_arr_id);
@@ -221,11 +249,13 @@ bool RenderTarget::InitTextureToScreen()
 	return true;
 }
 
-void RenderTarget::Free()
+void yuv::Free()
 {
 	End();
 	glDeleteFramebuffers(1, &fbo);
-	glDeleteTextures(1, &tex);
+	for (int i = 0; i < channels; i++) {
+		glDeleteTextures(1, &tex[i]);
+	}	
 	glDeleteRenderbuffers(1, &depth);
 	glDeleteBuffers(1, &quad_vert_buffer_id);
 	glDeleteVertexArrays(1, &quad_vert_arr_id);

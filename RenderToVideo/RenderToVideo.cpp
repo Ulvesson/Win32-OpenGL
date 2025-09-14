@@ -1,5 +1,6 @@
 #include "engine.h"
 #include "rendertarget.h"
+#include "yuv.h"
 
 #include <gl/glew.h>
 #include <GLFW/glfw3.h>
@@ -71,6 +72,11 @@ int main(void)
         }
     }
 
+    yuv rgb_to_yuv;
+    if (!rgb_to_yuv.init(width, height)) {
+        return EXIT_FAILURE;
+    }
+
     engine engine(Projection);
     int idx = 0;
 
@@ -87,16 +93,28 @@ int main(void)
         engine.render();
         renderTargets[idx].End();
 
+        // TODO: Gamma-Correction : Already in linear RGB, should not be needed!?
+        // https://nicolbolas.github.io/oldtut/Texturing/Tutorial%2016.html
+        // https://learnopengl.com/Advanced-Lighting/Gamma-Correction
+
+        // TODO: Convert RGB to YUV 4:2:0 in a fragment shader
+        // https://stackoverflow.com/questions/7901519/how-to-use-opengl-fragment-shader-to-convert-rgb-to-yuv420
+        rgb_to_yuv.Begin();
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        renderTargets[tail].RenderTexture(width, height);
+        rgb_to_yuv.ConvertToYUV(renderTargets[tail].get_texture());
+        rgb_to_yuv.End();
+
+        // Render result to screen
+        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        renderTargets[0].RenderTexture(width, height, rgb_to_yuv.get_texture(0));
 
         glfwSwapBuffers(window);
         glfwPollEvents();
 
         void* buf = read_buffer.data();
-        auto tex = renderTargets[tail].get_texture();
+        auto tex = rgb_to_yuv.get_texture(1);
         glGenerateTextureMipmap(tex);
-        glGetTextureImage(tex, 1, GL_RGB, GL_UNSIGNED_BYTE,
+        glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE,
             read_buffer_size, buf);
 
         idx = tail;
