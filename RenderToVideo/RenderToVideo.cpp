@@ -6,8 +6,12 @@
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
 
+#include <chrono>
+#include <filesystem>
 #include <iostream>
+#include <sstream>
 #include <vector>
+
 
 namespace {
 #ifdef _DEBUG
@@ -25,12 +29,24 @@ namespace {
             type, severity, message);
     }
 #endif
+
+    FILE* open_video(const std::string& filename, int width, int height) {
+        std::stringstream ss;
+        ss << "ffmpeg.exe -loglevel error "
+            << "-f rawvideo -pixel_format yuv420p -video_size "
+            << width << "*" << height << " -framerate 30 -i - "
+            << "-c:v h264_nvenc " << filename;
+
+        auto cmd = ss.str();
+        std::cout << "CMD: " << cmd << std::endl;
+        return _popen(cmd.c_str(), "wb");
+    }
 }
 
 int main(void)
 {
-    constexpr int width = 1024;
-    constexpr int height = 1024;
+    constexpr int width = 800;
+    constexpr int height = 600;
 
     GLFWwindow* window;
 
@@ -80,9 +96,23 @@ int main(void)
     engine engine(Projection);
     int idx = 0;
 
-    std::vector<GLubyte> read_buffer;
-    constexpr size_t read_buffer_size = width * height * 3;
-    read_buffer.reserve(read_buffer_size);
+    std::vector<GLubyte> Y;
+    std::vector<GLubyte> U;
+    std::vector<GLubyte> V;
+    constexpr size_t Y_size = width * height;
+    constexpr size_t U_size = width * height / 4;
+    constexpr size_t V_size = width * height / 4;
+    Y.reserve(Y_size);
+    U.reserve(U_size);
+    V.reserve(V_size);
+
+    auto filename = "test.mkv";
+    if (std::filesystem::exists(filename)) {
+        std::filesystem::remove(filename);
+    }
+    auto video = open_video("test.mkv", width, height);
+    int frame_no = 0;
+    auto started_at = std::chrono::high_resolution_clock::now();
 
     while (!glfwWindowShouldClose(window))
     {
@@ -105,21 +135,33 @@ int main(void)
         rgb_to_yuv.End();
 
         // Render result to screen
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        renderTargets[0].RenderTexture(width, height, rgb_to_yuv.get_texture(0));
+        //glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        //renderTargets[0].RenderTexture(width, height, renderTargets[tail].get_texture());
+        //glfwSwapBuffers(window);
 
-        glfwSwapBuffers(window);
         glfwPollEvents();
 
-        void* buf = read_buffer.data();
-        auto tex = rgb_to_yuv.get_texture(1);
+        auto tex = rgb_to_yuv.get_texture(0);
+        glGetTextureImage(tex, 0, GL_RED, GL_UNSIGNED_BYTE, Y_size, Y.data());
+        tex = rgb_to_yuv.get_texture(1);
         glGenerateTextureMipmap(tex);
-        glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE,
-            read_buffer_size, buf);
+        glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE, U_size, U.data());
+        tex = rgb_to_yuv.get_texture(2);
+        glGenerateTextureMipmap(tex);
+        glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE, V_size, V.data());
+
+        _fwrite_nolock(Y.data(), 1, Y_size, video);
+        _fwrite_nolock(U.data(), 1, U_size, video);
+        _fwrite_nolock(V.data(), 1, V_size, video);
 
         idx = tail;
+        frame_no++;
     }
 
+    std::chrono::duration<double> elapsed_seconds = std::chrono::high_resolution_clock::now() - started_at;
+    std::cout << "FPS: " << frame_no / elapsed_seconds.count() << std::endl;
+
+    _pclose(video);
     glfwTerminate();
     return 0;
 }

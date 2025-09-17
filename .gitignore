@@ -2,3 +2,6 @@
 x64
 packages
 *.user
+*.exe
+*.mkv
+3pp

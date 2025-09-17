@@ -44,20 +44,19 @@ namespace {
 			}
 		)";
 
-		// https://en.wikipedia.org/wiki/Y%E2%80%B2UV
-
 		const char* frag_src = R"(
 			#version 330 core
 			uniform sampler2D tex0;
 			in vec2 uv;
 			layout(location = 0) out vec3 color[3];
 
+            mat4 toYUV = mat4( 0.299, -0.14713,  0.615,   0,
+                               0.587, -0.28886, -0.51499, 0,
+                               0.144,  0.436,   -0.10001, 0,
+                               0.0625, 0.5,      0.5,     1 );
+
 			void main() {
-				mat3 m;
-				m[0] = vec3(0.299, -0.14713, 0.615);
-				m[1] = vec3(0.587, -0.28886, -0.51499);
-				m[2] = vec3(0.114, 0.436, -0.10001);
-				vec3 yuv = m * texture(tex0, uv).xyz;
+				vec4 yuv = toYUV * vec4(texture(tex0, uv).xyz, 1);
 				color[0] = vec3(yuv.x);
 				color[1] = vec3(yuv.y);
 				color[2] = vec3(yuv.z);
