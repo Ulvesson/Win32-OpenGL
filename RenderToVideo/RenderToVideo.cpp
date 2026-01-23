@@ -1,10 +1,12 @@
 #include "engine.h"
+#include "encoder.h"
 #include "rendertarget.h"
-#include "yuv.h"
 
 #include <gl/glew.h>
 #include <GLFW/glfw3.h>
 #include <glm/gtc/matrix_transform.hpp>
+
+#include <cuda.h>
 
 #include <chrono>
 #include <filesystem>
@@ -12,6 +14,8 @@
 #include <sstream>
 #include <vector>
 
+#pragma comment(lib, "cudart.lib")
+#pragma comment(lib, "cuda.lib")
 
 namespace {
 #ifdef _DEBUG
@@ -41,12 +45,41 @@ namespace {
         std::cout << "CMD: " << cmd << std::endl;
         return _popen(cmd.c_str(), "wb");
     }
+
+	CUcontext createCudaContext() {
+		CUdevice cuDevice;
+		CUcontext cuContext;
+
+		// Initialize CUDA
+		if (cuInit(0) != CUDA_SUCCESS) {
+			throw std::runtime_error("Failed to initialize CUDA");
+		}
+
+		// Get the first CUDA device
+		if (cuDeviceGet(&cuDevice, 0) != CUDA_SUCCESS) {
+			throw std::runtime_error("Failed to get CUDA device");
+		}
+
+        // Set up CUctxCreateParams
+        //CUctxCreateParams ctxCreateParams = {};
+        //ctxCreateParams.flags = CU_CTX_SCHED_AUTO; // Automatic scheduling
+        //ctxCreateParams.ordinal = 0;              // Use the first device
+        //std::fill(std::begin(ctxCreateParams.reserved), std::end(ctxCreateParams.reserved), nullptr);
+
+		// Create a CUDA context
+		if (cuCtxCreate(&cuContext, nullptr, CU_CTX_SCHED_AUTO, cuDevice) != CUDA_SUCCESS) {
+			throw std::runtime_error("Failed to create CUDA context");
+		}
+
+		std::cout << "CUDA context created successfully!" << std::endl;
+		return cuContext;
+	}
 }
 
 int main(void)
 {
     constexpr int width = 800;
-    constexpr int height = 600;
+    constexpr int height = 800;
 
     GLFWwindow* window;
 
@@ -70,17 +103,20 @@ int main(void)
         return EXIT_FAILURE;
     }
 
+    auto cudaCtx = createCudaContext();
+
 #ifdef _DEBUG
     // During init, enable debug output
     glEnable(GL_DEBUG_OUTPUT);
     glDebugMessageCallback(MessageCallback, 0);
 #endif
 
-    // Projection matrix: 45° Field of View, 4:3 ratio, display range: 0.1 unit <-> 100 units
+    // Projection matrix: 45 deg Field of View, 4:3 ratio, display range: 0.1 unit <-> 100 units
     const glm::mat4 Projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
 
-    constexpr int no_buffers = 2;
+    constexpr int no_buffers = 3;
     RenderTarget renderTargets[no_buffers];
+	GLsync fences[no_buffers];
 
     for (int i = 0; i < no_buffers; i++) {
         if (!renderTargets[i].init(width, height)) {
@@ -88,37 +124,27 @@ int main(void)
         }
     }
 
-    yuv rgb_to_yuv;
-    if (!rgb_to_yuv.init(width, height)) {
-        return EXIT_FAILURE;
-    }
-
+    Encoder encoder;
+    encoder.initializeEncoder();
+	encoder.createSession(cudaCtx);
+	encoder.createEncoder(width, height, 4000000, 30);
+	encoder.openOutputFile("output.mp4");
     engine engine(Projection);
     int idx = 0;
-
-    std::vector<GLubyte> Y;
-    std::vector<GLubyte> U;
-    std::vector<GLubyte> V;
-    constexpr size_t Y_size = width * height;
-    constexpr size_t U_size = width * height / 4;
-    constexpr size_t V_size = width * height / 4;
-    Y.reserve(Y_size);
-    U.reserve(U_size);
-    V.reserve(V_size);
+	int tail = 1 - no_buffers;
 
     auto filename = "test.mkv";
     if (std::filesystem::exists(filename)) {
         std::filesystem::remove(filename);
     }
-    auto video = open_video("test.mkv", width, height);
+
+    encoder.initializeEncoder();
     int frame_no = 0;
     auto started_at = std::chrono::high_resolution_clock::now();
 
     while (!glfwWindowShouldClose(window))
     {
-        const int tail = (idx + 1) % no_buffers;
         engine.update(glfwGetTime());
-
         renderTargets[idx].Begin();
         engine.render();
         renderTargets[idx].End();
@@ -127,41 +153,64 @@ int main(void)
         // https://nicolbolas.github.io/oldtut/Texturing/Tutorial%2016.html
         // https://learnopengl.com/Advanced-Lighting/Gamma-Correction
 
-        // TODO: Convert RGB to YUV 4:2:0 in a fragment shader
-        // https://stackoverflow.com/questions/7901519/how-to-use-opengl-fragment-shader-to-convert-rgb-to-yuv420
-        rgb_to_yuv.Begin();
-        glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        rgb_to_yuv.ConvertToYUV(renderTargets[tail].get_texture());
-        rgb_to_yuv.End();
-
-        // Render result to screen
+        //// TODO: Convert RGB to YUV 4:2:0 in a fragment shader
+        //// https://stackoverflow.com/questions/7901519/how-to-use-opengl-fragment-shader-to-convert-rgb-to-yuv420
+        //rgb_to_yuv.Begin();
         //glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        //renderTargets[0].RenderTexture(width, height, renderTargets[tail].get_texture());
+        //rgb_to_yuv.ConvertToYUV(renderTargets[tail].get_texture());
+        //rgb_to_yuv.End();
+
+        //// Render result to screen
+        //glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+        //renderTargets[0].RenderTexture(width, height, renderTargets[idx].get_texture());
         //glfwSwapBuffers(window);
 
-        glfwPollEvents();
+        //auto tex = rgb_to_yuv.get_texture(0);
+        //glGetTextureImage(tex, 0, GL_RED, GL_UNSIGNED_BYTE, Y_size, Y.data());
+        //tex = rgb_to_yuv.get_texture(1);
+        //glGenerateTextureMipmap(tex);
+        //glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE, U_size, U.data());
+        //tex = rgb_to_yuv.get_texture(2);
+        //glGenerateTextureMipmap(tex);
+        //glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE, V_size, V.data());
 
-        auto tex = rgb_to_yuv.get_texture(0);
-        glGetTextureImage(tex, 0, GL_RED, GL_UNSIGNED_BYTE, Y_size, Y.data());
-        tex = rgb_to_yuv.get_texture(1);
-        glGenerateTextureMipmap(tex);
-        glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE, U_size, U.data());
-        tex = rgb_to_yuv.get_texture(2);
-        glGenerateTextureMipmap(tex);
-        glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE, V_size, V.data());
+        //_fwrite_nolock(Y.data(), 1, Y_size, video);
+        //_fwrite_nolock(U.data(), 1, U_size, video);
+        //_fwrite_nolock(V.data(), 1, V_size, video);
 
-        _fwrite_nolock(Y.data(), 1, Y_size, video);
-        _fwrite_nolock(U.data(), 1, U_size, video);
-        _fwrite_nolock(V.data(), 1, V_size, video);
+		fences[idx] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+		
+        if (tail >= 0) {
+            // Wait for the fence of the buffer to be encoded next
+            while (true) {
+                GLenum waitReturn = glClientWaitSync(fences[tail], GL_SYNC_FLUSH_COMMANDS_BIT, 10000);
+                if (waitReturn == GL_ALREADY_SIGNALED || waitReturn == GL_CONDITION_SATISFIED) {
+                    break;
+                }
+            }
+            glDeleteSync(fences[tail]);
 
-        idx = tail;
+            if (encoder.mapInput(renderTargets[tail].get_texture(), width, height)) {
+                encoder.processTextureWithNvenc();
+                encoder.unmapInput();
+            }
+		}
+
+		idx = (idx + 1) % no_buffers;
+		tail = tail < 0 ? tail + 1 : (tail + 1) % no_buffers;
         frame_no++;
+        glfwPollEvents();
     }
 
     std::chrono::duration<double> elapsed_seconds = std::chrono::high_resolution_clock::now() - started_at;
     std::cout << "FPS: " << frame_no / elapsed_seconds.count() << std::endl;
 
-    _pclose(video);
+    if (cuCtxDestroy(cudaCtx) != CUDA_SUCCESS) {
+        std::cerr << "Failed to destroy CUDA context" << std::endl;
+        return EXIT_FAILURE;
+    }
+
+    //_pclose(video);
     glfwTerminate();
     return 0;
 }
