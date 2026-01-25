@@ -15,8 +15,6 @@ extern "C" {
 #include <chrono>
 #include <filesystem>
 #include <iostream>
-#include <sstream>
-#include <vector>
 
 #pragma comment(lib, "cudart.lib")
 #pragma comment(lib, "cuda.lib")
@@ -38,18 +36,6 @@ namespace {
     }
 #endif
 
-    FILE* open_video(const std::string& filename, int width, int height) {
-        std::stringstream ss;
-        ss << "ffmpeg.exe -loglevel error "
-            << "-f rawvideo -pixel_format yuv420p -video_size "
-            << width << "*" << height << " -framerate 30 -i - "
-            << "-c:v h264_nvenc " << filename;
-
-        auto cmd = ss.str();
-        std::cout << "CMD: " << cmd << std::endl;
-        return _popen(cmd.c_str(), "wb");
-    }
-
 	CUcontext createCudaContext() {
 		CUdevice cuDevice;
 		CUcontext cuContext;
@@ -63,12 +49,6 @@ namespace {
 		if (cuDeviceGet(&cuDevice, 0) != CUDA_SUCCESS) {
 			throw std::runtime_error("Failed to get CUDA device");
 		}
-
-        // Set up CUctxCreateParams
-        //CUctxCreateParams ctxCreateParams = {};
-        //ctxCreateParams.flags = CU_CTX_SCHED_AUTO; // Automatic scheduling
-        //ctxCreateParams.ordinal = 0;              // Use the first device
-        //std::fill(std::begin(ctxCreateParams.reserved), std::end(ctxCreateParams.reserved), nullptr);
 
 		// Create a CUDA context
 		if (cuCtxCreate(&cuContext, nullptr, CU_CTX_SCHED_AUTO, cuDevice) != CUDA_SUCCESS) {
@@ -119,7 +99,7 @@ int main(void)
     // Projection matrix: 45 deg Field of View, 4:3 ratio, display range: 0.1 unit <-> 100 units
     const glm::mat4 Projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
 
-    constexpr int no_buffers = 2;
+    constexpr int no_buffers = 1;
     RenderTarget renderTargets[no_buffers];
 	GLsync fences[no_buffers];
 
@@ -144,7 +124,6 @@ int main(void)
         std::filesystem::remove(filename);
     }
 
-    encoder.initializeEncoder();
     int frame_no = 0;
     auto started_at = std::chrono::high_resolution_clock::now();
 
@@ -155,41 +134,12 @@ int main(void)
         engine.render();
         renderTargets[idx].End();
 
-        // TODO: Gamma-Correction : Already in linear RGB, should not be needed!?
-        // https://nicolbolas.github.io/oldtut/Texturing/Tutorial%2016.html
-        // https://learnopengl.com/Advanced-Lighting/Gamma-Correction
-
-        //// TODO: Convert RGB to YUV 4:2:0 in a fragment shader
-        //// https://stackoverflow.com/questions/7901519/how-to-use-opengl-fragment-shader-to-convert-rgb-to-yuv420
-        //rgb_to_yuv.Begin();
-        //glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        //rgb_to_yuv.ConvertToYUV(renderTargets[tail].get_texture());
-        //rgb_to_yuv.End();
-
-        //// Render result to screen
-        //glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
-        //renderTargets[0].RenderTexture(width, height, renderTargets[idx].get_texture());
-        //glfwSwapBuffers(window);
-
-        //auto tex = rgb_to_yuv.get_texture(0);
-        //glGetTextureImage(tex, 0, GL_RED, GL_UNSIGNED_BYTE, Y_size, Y.data());
-        //tex = rgb_to_yuv.get_texture(1);
-        //glGenerateTextureMipmap(tex);
-        //glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE, U_size, U.data());
-        //tex = rgb_to_yuv.get_texture(2);
-        //glGenerateTextureMipmap(tex);
-        //glGetTextureImage(tex, 1, GL_RED, GL_UNSIGNED_BYTE, V_size, V.data());
-
-        //_fwrite_nolock(Y.data(), 1, Y_size, video);
-        //_fwrite_nolock(U.data(), 1, U_size, video);
-        //_fwrite_nolock(V.data(), 1, V_size, video);
-
 		fences[idx] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		
         if (tail >= 0) {
             // Wait for the fence of the buffer to be encoded next
             while (true) {
-                GLenum waitReturn = glClientWaitSync(fences[tail], GL_SYNC_FLUSH_COMMANDS_BIT, 10000);
+                GLenum waitReturn = glClientWaitSync(fences[tail], GL_SYNC_FLUSH_COMMANDS_BIT, 6000);
                 if (waitReturn == GL_ALREADY_SIGNALED || waitReturn == GL_CONDITION_SATISFIED) {
                     break;
                 }
@@ -207,8 +157,9 @@ int main(void)
             }
 		}
 
-		idx = (idx + 1) % no_buffers;
-		tail = tail < 0 ? tail + 1 : (tail + 1) % no_buffers;
+		//idx = (idx + 1) % no_buffers;
+		//tail = tail < 0 ? tail + 1 : (tail + 1) % no_buffers;
+        tail = idx; // = 0
         frame_no++;
         glfwPollEvents();
     }

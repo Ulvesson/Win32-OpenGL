@@ -7,6 +7,12 @@
 #include <cuda.h>
 #include <cuda_gl_interop.h>
 
+// Add these includes at the top
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+}
+
 #include <fstream>
 #include <string>
 
@@ -41,4 +47,7 @@ private:
     NV_ENC_MAP_INPUT_RESOURCE mapInputRes = {};
 	NV_ENC_OUTPUT_PTR outputBitstreamBuffer = nullptr;
     std::ofstream outputFile;
+    AVFormatContext* fmt_ctx = nullptr;
+    AVStream* video_stream = nullptr;
+    int64_t pts = 0;
 };

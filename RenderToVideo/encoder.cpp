@@ -4,12 +4,8 @@
 
 // Add the correct include path for CUDA headers
 #include <cuda_runtime.h>
-
-// Add these includes at the top
-extern "C" {
-#include <libavformat/avformat.h>
-#include <libavcodec/avcodec.h>
-}
+#include <vector>
+#include <cstring>
 
 namespace {
     int GetCapabilityValue(NV_ENCODE_API_FUNCTION_LIST& nvenc, void* encoder, GUID guidCodec, NV_ENC_CAPS capsToQuery)
@@ -24,6 +20,46 @@ namespace {
         nvenc.nvEncGetEncodeCaps(encoder, guidCodec, &capsParam, &v);
         return v;
     }
+
+    // Helper to find NAL units in Annex B format
+    void extract_sps_pps(const uint8_t* data, size_t size, std::vector<uint8_t>& out) {
+        size_t i = 0;
+        while (i + 4 < size) {
+            // Find start code
+            if (data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x00 && data[i + 3] == 0x01) {
+                size_t nal_start = i + 4;
+                uint8_t nal_type = data[nal_start] & 0x1F;
+                // Find next start code
+                size_t next = nal_start;
+                while (next + 4 < size &&
+                    !(data[next] == 0x00 && data[next + 1] == 0x00 && data[next + 2] == 0x00 && data[next + 3] == 0x01)) {
+                    ++next;
+                }
+                size_t nal_end = next;
+                // If SPS or PPS, copy to output
+                if (nal_type == 7 || nal_type == 8) {
+                    out.insert(out.end(), &data[i], &data[nal_end]);
+                }
+                i = nal_end;
+            }
+            else {
+                ++i;
+            }
+        }
+    }
+
+    // Call this after encoding your first keyframe (IDR)
+    void set_sps_pps_extradata(AVStream* stream, const uint8_t* data, size_t size) {
+        std::vector<uint8_t> sps_pps;
+        extract_sps_pps(data, size, sps_pps);
+        if (!sps_pps.empty()) {
+            stream->codecpar->extradata = (uint8_t*)av_malloc(sps_pps.size() + AV_INPUT_BUFFER_PADDING_SIZE);
+            memcpy(stream->codecpar->extradata, sps_pps.data(), sps_pps.size());
+            memset(stream->codecpar->extradata + sps_pps.size(), 0, AV_INPUT_BUFFER_PADDING_SIZE);
+            stream->codecpar->extradata_size = (int)sps_pps.size();
+        }
+    }
+
 }
 
 Encoder::Encoder() {
@@ -37,11 +73,6 @@ Encoder::~Encoder() {
     }
     closeOutputFile();
 }
-
-// Add these members to your Encoder class
-AVFormatContext* fmt_ctx = nullptr;
-AVStream* video_stream = nullptr;
-int64_t pts = 0;
 
 void Encoder::initializeEncoder()
 {
@@ -310,22 +341,18 @@ void Encoder::openOutputFile(const std::string& filename, int width, int height,
 
     // Create stream and copy parameters
     video_stream = avformat_new_stream(fmt_ctx, codec);
+    video_stream->time_base = AVRational{ 1, fps };
     avcodec_parameters_from_context(video_stream->codecpar, codec_ctx);
+    video_stream->codecpar->codec_tag = 0;
 
     // Clean up
     avcodec_free_context(&codec_ctx);
-
-    fmt_ctx->duration = 0;
-    video_stream->time_base = AVRational{1, fps};
-    video_stream->duration = 0;
 
     if (!(fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
         if (avio_open(&fmt_ctx->pb, filename.c_str(), AVIO_FLAG_WRITE) < 0)
             throw std::runtime_error("Could not open output file");
     }
 
-    if (avformat_write_header(fmt_ctx, nullptr) < 0)
-        throw std::runtime_error("Error occurred when writing header");
     pts = 0;
 }
 
@@ -344,6 +371,16 @@ void Encoder::closeOutputFile() {
 
 // Call this after each frame is encoded (in processTextureWithNvenc)
 void Encoder::writeFrameToMkv(const void* data, size_t size, bool keyframe) {
+    static bool first_key_frame = true;
+
+    if (first_key_frame && keyframe) {
+        set_sps_pps_extradata(video_stream, static_cast<const uint8_t*>(data), size);
+        if (avformat_write_header(fmt_ctx, nullptr) < 0)
+            throw std::runtime_error("Error occurred when writing header");
+        first_key_frame = false;
+	}
+
+	std::cout << "Writing frame, size: " << size << ", keyframe: " << keyframe << ", pts: " << pts << std::endl;
     if (!fmt_ctx || !video_stream) return;
 
     AVPacket* pkt = av_packet_alloc();
