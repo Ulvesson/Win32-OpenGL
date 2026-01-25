@@ -5,6 +5,12 @@
 // Add the correct include path for CUDA headers
 #include <cuda_runtime.h>
 
+// Add these includes at the top
+extern "C" {
+#include <libavformat/avformat.h>
+#include <libavcodec/avcodec.h>
+}
+
 namespace {
     int GetCapabilityValue(NV_ENCODE_API_FUNCTION_LIST& nvenc, void* encoder, GUID guidCodec, NV_ENC_CAPS capsToQuery)
     {
@@ -32,9 +38,10 @@ Encoder::~Encoder() {
     closeOutputFile();
 }
 
-void Encoder::encode(const char* input, char* output) {
-    // Encoding logic here
-}
+// Add these members to your Encoder class
+AVFormatContext* fmt_ctx = nullptr;
+AVStream* video_stream = nullptr;
+int64_t pts = 0;
 
 void Encoder::initializeEncoder()
 {
@@ -60,77 +67,7 @@ void Encoder::initializeEncoder()
         FreeLibrary(nvencDll);
         nvencDll = nullptr;
     }
-    
-	//cudaGraphicsGLRegisterImage(&cudaResource, openglTextureId, GL_TEXTURE_2D, cudaGraphicsRegisterFlagsReadOnly);
 }
-
-//void Encoder::processTextureWithNvenc(cudaGraphicsResource* cudaResource) {
-//    // Map the OpenGL texture to CUDA
-//    if (cudaGraphicsMapResources(1, &cudaResource, 0) != cudaSuccess) {
-//        std::cerr << "Failed to map OpenGL texture to CUDA" << std::endl;
-//        return;
-//    }
-//
-//    // Get the CUDA array from the mapped resource
-//    cudaArray_t cudaArray;
-//    if (cudaGraphicsSubResourceGetMappedArray(&cudaArray, cudaResource, 0, 0) != cudaSuccess) {
-//        std::cerr << "Failed to get CUDA array from OpenGL texture" << std::endl;
-//        cudaGraphicsUnmapResources(1, &cudaResource, 0);
-//        return;
-//    }
-//
-//    // Use the CUDA array as input for NVENC
-//    NV_ENC_REGISTER_RESOURCE registerResource = {};
-//    registerResource.version = NV_ENC_REGISTER_RESOURCE_VER;
-//    registerResource.resourceType = NV_ENC_INPUT_RESOURCE_TYPE_CUDAARRAY;
-//    registerResource.resourceToRegister = cudaArray;
-//    registerResource.width = 1920; // Set your texture width
-//    registerResource.height = 1080; // Set your texture height
-//    registerResource.pitch = 0;
-//    registerResource.bufferFormat = NV_ENC_BUFFER_FORMAT_NV12; // Set the format (e.g., NV12 for YUV 4:2:0)
-//    registerResource.bufferUsage = NV_ENC_INPUT_IMAGE;
-//
-//    NVENCSTATUS status = nvenc.nvEncRegisterResource(encoder, &registerResource);
-//    if (status != NV_ENC_SUCCESS) {
-//        std::cerr << "Failed to register CUDA array with NVENC: " << status << std::endl;
-//        cudaGraphicsUnmapResources(1, &cudaResource, 0);
-//        return;
-//    }
-//
-//    // Map the registered resource to an NVENC input buffer
-//    NV_ENC_MAP_INPUT_RESOURCE mapInput = {};
-//    mapInput.version = NV_ENC_MAP_INPUT_RESOURCE_VER;
-//    mapInput.registeredResource = registerResource.registeredResource;
-//
-//    status = nvenc.nvEncMapInputResource(encoder, &mapInput);
-//    if (status != NV_ENC_SUCCESS) {
-//        std::cerr << "Failed to map NVENC input resource: " << status << std::endl;
-//        nvenc.nvEncUnregisterResource(encoder, registerResource.registeredResource);
-//        cudaGraphicsUnmapResources(1, &cudaResource, 0);
-//        return;
-//    }
-//
-//    // Use mapInput.mappedResource for encoding
-//    // Example: Submit the frame to NVENC
-//    NV_ENC_PIC_PARAMS picParams = {};
-//    picParams.version = NV_ENC_PIC_PARAMS_VER;
-//    picParams.inputBuffer = mapInput.mappedResource;
-//    picParams.bufferFmt = NV_ENC_BUFFER_FORMAT_NV12;
-//    picParams.inputWidth = 1920;
-//    picParams.inputHeight = 1080;
-//    picParams.outputBitstream = nullptr; // Set your output bitstream buffer
-//    picParams.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
-//
-//    status = nvenc.nvEncEncodePicture(encoder, &picParams);
-//    if (status != NV_ENC_SUCCESS) {
-//        std::cerr << "Failed to encode picture: " << status << std::endl;
-//    }
-//
-//    // Unmap and unregister resources
-//    nvenc.nvEncUnmapInputResource(encoder, mapInput.mappedResource);
-//    nvenc.nvEncUnregisterResource(encoder, registerResource.registeredResource);
-//    cudaGraphicsUnmapResources(1, &cudaResource, 0);
-//}
 
 void Encoder::createSession(CUcontext cudaContext) {
     // Open an encoding session with CUDA
@@ -315,11 +252,9 @@ void Encoder::processTextureWithNvenc()
     }
 
     // Write the encoded data to file
-    if (outputFile.is_open() && lockBitstreamData.bitstreamSizeInBytes > 0) {
-        outputFile.write(
-            static_cast<const char*>(lockBitstreamData.bitstreamBufferPtr),
-            lockBitstreamData.bitstreamSizeInBytes
-        );
+    if (lockBitstreamData.bitstreamSizeInBytes > 0) {
+        bool keyframe = (lockBitstreamData.pictureType == NV_ENC_PIC_TYPE_IDR);
+        writeFrameToMkv(lockBitstreamData.bitstreamBufferPtr, lockBitstreamData.bitstreamSizeInBytes, keyframe);
     }
 
     // Unlock the bitstream
@@ -355,15 +290,74 @@ void Encoder::destroyOutputBitstreamBuffer()
     }
 }
 
-void Encoder::openOutputFile(const std::string& filename) {
-    outputFile.open(filename, std::ios::binary);
-    if (!outputFile) {
-        throw std::runtime_error("Failed to open output file");
+// Call this before encoding starts
+void Encoder::openOutputFile(const std::string& filename, int width, int height, int fps) {
+
+    avformat_alloc_output_context2(&fmt_ctx, nullptr, "matroska", filename.c_str());
+    if (!fmt_ctx) throw std::runtime_error("Could not allocate output context");
+
+    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
+    AVCodecContext* codec_ctx = avcodec_alloc_context3(codec);
+    codec_ctx->width = width;
+    codec_ctx->height = height;
+    codec_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
+    codec_ctx->time_base = AVRational{1, fps};
+    codec_ctx->bit_rate = 4000000;
+
+    // Open codec to fill extradata
+    avcodec_open2(codec_ctx, codec, nullptr);
+
+    // Create stream and copy parameters
+    video_stream = avformat_new_stream(fmt_ctx, codec);
+    avcodec_parameters_from_context(video_stream->codecpar, codec_ctx);
+
+    // Clean up
+    avcodec_free_context(&codec_ctx);
+
+    fmt_ctx->duration = 0;
+    video_stream->time_base = AVRational{1, fps};
+    video_stream->duration = 0;
+
+    if (!(fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+        if (avio_open(&fmt_ctx->pb, filename.c_str(), AVIO_FLAG_WRITE) < 0)
+            throw std::runtime_error("Could not open output file");
+    }
+
+    if (avformat_write_header(fmt_ctx, nullptr) < 0)
+        throw std::runtime_error("Error occurred when writing header");
+    pts = 0;
+}
+
+// Call this after encoding ends
+void Encoder::closeOutputFile() {
+    if (fmt_ctx) {
+        av_write_trailer(fmt_ctx);
+        if (!(fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
+            avio_closep(&fmt_ctx->pb);
+        }
+        avformat_free_context(fmt_ctx);
+        fmt_ctx = nullptr;
+        video_stream = nullptr;
     }
 }
 
-void Encoder::closeOutputFile() {
-    if (outputFile.is_open()) {
-        outputFile.close();
-    }
+// Call this after each frame is encoded (in processTextureWithNvenc)
+void Encoder::writeFrameToMkv(const void* data, size_t size, bool keyframe) {
+    if (!fmt_ctx || !video_stream) return;
+
+    AVPacket* pkt = av_packet_alloc();
+    if (!pkt) return;
+
+    pkt->data = (uint8_t*)data;
+    pkt->size = static_cast<int>(size);
+    pkt->stream_index = video_stream->index;
+    pkt->pts = pts;
+    pkt->dts = pts;
+    pkt->duration = 1;
+    pkt->flags = keyframe ? AV_PKT_FLAG_KEY : 0;
+    pkt->pos = -1;
+
+    av_interleaved_write_frame(fmt_ctx, pkt);
+    av_packet_free(&pkt);
+    pts++;
 }

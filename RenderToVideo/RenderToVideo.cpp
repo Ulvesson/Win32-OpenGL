@@ -8,6 +8,10 @@
 
 #include <cuda.h>
 
+extern "C" {
+#include <libavutil/log.h>
+}
+
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -104,6 +108,7 @@ int main(void)
     }
 
     auto cudaCtx = createCudaContext();
+    av_log_set_level(AV_LOG_WARNING);
 
 #ifdef _DEBUG
     // During init, enable debug output
@@ -114,7 +119,7 @@ int main(void)
     // Projection matrix: 45 deg Field of View, 4:3 ratio, display range: 0.1 unit <-> 100 units
     const glm::mat4 Projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
 
-    constexpr int no_buffers = 3;
+    constexpr int no_buffers = 2;
     RenderTarget renderTargets[no_buffers];
 	GLsync fences[no_buffers];
 
@@ -124,11 +129,12 @@ int main(void)
         }
     }
 
+    constexpr int fps = 25;
     Encoder encoder;
     encoder.initializeEncoder();
 	encoder.createSession(cudaCtx);
-	encoder.createEncoder(width, height, 4000000, 30);
-	encoder.openOutputFile("output.mp4");
+	encoder.createEncoder(width, height, 4000000, fps);
+	encoder.openOutputFile("output.mkv", width, height, fps);
     engine engine(Projection);
     int idx = 0;
 	int tail = 1 - no_buffers;

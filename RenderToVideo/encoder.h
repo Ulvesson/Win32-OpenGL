@@ -14,7 +14,6 @@ class Encoder {
 public:
     Encoder();
     ~Encoder();
-    void encode(const char* input, char* output);
 	void initializeEncoder();
 
     void createSession(CUcontext cudaContext);
@@ -23,7 +22,8 @@ public:
     bool mapInput(GLuint textureId, uint32_t width, uint32_t height);
 	void unmapInput();
     void processTextureWithNvenc();
-    void openOutputFile(const std::string &filename);
+    void openOutputFile(const std::string &filename, int width, int height, int fps);
+    void writeFrameToMkv(const void* data, size_t size, bool keyframe);
 
 private:
     void createOutputBitstreamBuffer();
