@@ -224,7 +224,7 @@ void Encoder::unmapInput()
     cudaGraphicsUnregisterResource(cudaResource);
 }
 
-void Encoder::processTextureWithNvenc()
+bool Encoder::processTextureWithNvenc()
 {
     NV_ENC_PIC_PARAMS picParams = {};
     picParams.version = NV_ENC_PIC_PARAMS_VER;
@@ -237,7 +237,7 @@ void Encoder::processTextureWithNvenc()
     NVENCSTATUS status = nvenc.nvEncEncodePicture(encoderSession, &picParams);
     if (status != NV_ENC_SUCCESS) {
         std::cerr << "Failed to encode picture: " << status << std::endl;
-        return;
+        return false;
     }
 
     // Lock the bitstream to access encoded data
@@ -248,7 +248,7 @@ void Encoder::processTextureWithNvenc()
     status = nvenc.nvEncLockBitstream(encoderSession, &lockBitstreamData);
     if (status != NV_ENC_SUCCESS) {
         std::cerr << "Failed to lock bitstream: " << status << std::endl;
-        return;
+        return false;
     }
 
     // Write the encoded data to file
@@ -259,6 +259,7 @@ void Encoder::processTextureWithNvenc()
 
     // Unlock the bitstream
     nvenc.nvEncUnlockBitstream(encoderSession, outputBitstreamBuffer);
+	return true;
 }
 
 void Encoder::createOutputBitstreamBuffer()

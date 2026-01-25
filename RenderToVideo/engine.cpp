@@ -93,8 +93,8 @@ engine::engine(const glm::mat4x4& proj)
 
 void engine::update(double time)
 {
-	float dt = static_cast<float>(time) - static_cast<float>(last_time);
-	last_time = time;
+	//float dt = static_cast<float>(time) - static_cast<float>(last_time);
+	//last_time = time;
 	model = glm::rotate(model, 2 * PI / 360.0f, glm::vec3(0.5f, 0.75, 0));
 }
 

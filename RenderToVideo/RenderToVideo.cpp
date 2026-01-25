@@ -108,7 +108,7 @@ int main(void)
     }
 
     auto cudaCtx = createCudaContext();
-    av_log_set_level(AV_LOG_WARNING);
+    av_log_set_level(AV_LOG_INFO);
 
 #ifdef _DEBUG
     // During init, enable debug output
@@ -197,8 +197,13 @@ int main(void)
             glDeleteSync(fences[tail]);
 
             if (encoder.mapInput(renderTargets[tail].get_texture(), width, height)) {
-                encoder.processTextureWithNvenc();
+                if (!encoder.processTextureWithNvenc()) {
+                    std::cerr << "Failed to encode frame " << frame_no << std::endl;
+				}
                 encoder.unmapInput();
+            }
+            else {
+				std::cerr << "Failed to map input texture for encoding" << std::endl;
             }
 		}
 
@@ -210,6 +215,8 @@ int main(void)
 
     std::chrono::duration<double> elapsed_seconds = std::chrono::high_resolution_clock::now() - started_at;
     std::cout << "FPS: " << frame_no / elapsed_seconds.count() << std::endl;
+	std::cout << "Total frames: " << frame_no << std::endl;
+	std::cout << "Duration seconds: " << frame_no / fps << std::endl;
 
     if (cuCtxDestroy(cudaCtx) != CUDA_SUCCESS) {
         std::cerr << "Failed to destroy CUDA context" << std::endl;

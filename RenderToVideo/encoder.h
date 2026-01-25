@@ -21,7 +21,7 @@ public:
     void createEncoder(uint32_t width, uint32_t height, uint32_t bitrate, uint32_t frameRate);
     bool mapInput(GLuint textureId, uint32_t width, uint32_t height);
 	void unmapInput();
-    void processTextureWithNvenc();
+    bool processTextureWithNvenc();
     void openOutputFile(const std::string &filename, int width, int height, int fps);
     void writeFrameToMkv(const void* data, size_t size, bool keyframe);
 
