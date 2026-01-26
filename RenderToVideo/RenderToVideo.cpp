@@ -162,6 +162,10 @@ int main(void)
         tail = idx; // = 0
         frame_no++;
         glfwPollEvents();
+
+        if (frame_no >= 250) { // 10 seconds at 25 fps
+            break;
+		}
     }
 
     std::chrono::duration<double> elapsed_seconds = std::chrono::high_resolution_clock::now() - started_at;

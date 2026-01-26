@@ -140,19 +140,6 @@ void Encoder::createEncoder(uint32_t width, uint32_t height, uint32_t bitrate, u
     initParams.presetGUID = NV_ENC_PRESET_P5_GUID; // Use default preset
 	initParams.tuningInfo = NV_ENC_TUNING_INFO_HIGH_QUALITY; // High quality tuning
 
-    // Configure encoding settings
-    //encodeConfig.version = NV_ENC_CONFIG_VER;
-    //encodeConfig.profileGUID = NV_ENC_H264_PROFILE_BASELINE_GUID; // Use baseline profile
-    //encodeConfig.gopLength = NVENC_INFINITE_GOPLENGTH; // Infinite GOP length
-    //encodeConfig.frameIntervalP = 1; // No B-frames
-    //encodeConfig.frameFieldMode = NV_ENC_PARAMS_FRAME_FIELD_MODE_FRAME;
-    //encodeConfig.mvPrecision = NV_ENC_MV_PRECISION_QUARTER_PEL;
-    //encodeConfig.rcParams.rateControlMode = NV_ENC_PARAMS_RC_CBR; // Constant bitrate
-    //encodeConfig.rcParams.averageBitRate = bitrate;
-    //encodeConfig.rcParams.maxBitRate = bitrate;
-    //encodeConfig.rcParams.vbvBufferSize = bitrate / frameRate;
-    //encodeConfig.rcParams.vbvInitialDelay = bitrate / frameRate;
-
     NVENCSTATUS status;
     NV_ENC_PRESET_CONFIG presetConfig = { NV_ENC_PRESET_CONFIG_VER, 0, { NV_ENC_CONFIG_VER } };
     status = nvenc.nvEncGetEncodePresetConfigEx(encoderSession, NV_ENC_CODEC_H264_GUID, NV_ENC_PRESET_P5_GUID,
@@ -163,7 +150,7 @@ void Encoder::createEncoder(uint32_t width, uint32_t height, uint32_t bitrate, u
     presetConfig.presetCfg.rcParams.constQP.qpIntra = 28;
     presetConfig.presetCfg.rcParams.constQP.qpInterP = 31;
     presetConfig.presetCfg.rcParams.constQP.qpInterB = 31;
-    presetConfig.presetCfg.gopLength = (uint32_t)250;        // or keep as preset
+    presetConfig.presetCfg.gopLength = (uint32_t)25 * 2;        // or keep as preset
     presetConfig.presetCfg.frameIntervalP = 1;               // single ref interval
 
     memcpy(initParams.encodeConfig, &presetConfig.presetCfg, sizeof(NV_ENC_CONFIG));
@@ -353,7 +340,7 @@ void Encoder::openOutputFile(const std::string& filename, int width, int height,
             throw std::runtime_error("Could not open output file");
     }
 
-    pts = 0;
+    frame_no = 0;
 }
 
 // Call this after encoding ends
@@ -380,22 +367,22 @@ void Encoder::writeFrameToMkv(const void* data, size_t size, bool keyframe) {
         first_key_frame = false;
 	}
 
-	std::cout << "Writing frame, size: " << size << ", keyframe: " << keyframe << ", pts: " << pts << std::endl;
+	std::cout << "Writing frame, size: " << size << ", keyframe: " << keyframe << ", pts: " << frame_no << std::endl;
     if (!fmt_ctx || !video_stream) return;
 
     AVPacket* pkt = av_packet_alloc();
     if (!pkt) return;
-
+	const int64_t pts = (frame_no * 1000) / 25; // assuming 25 fps
     pkt->data = (uint8_t*)data;
     pkt->size = static_cast<int>(size);
     pkt->stream_index = video_stream->index;
     pkt->pts = pts;
     pkt->dts = pts;
-    pkt->duration = 1;
+    pkt->duration = 1000 / 25;
     pkt->flags = keyframe ? AV_PKT_FLAG_KEY : 0;
     pkt->pos = -1;
 
     av_interleaved_write_frame(fmt_ctx, pkt);
     av_packet_free(&pkt);
-    pts++;
+    frame_no++;
 }

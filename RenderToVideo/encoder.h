@@ -49,5 +49,5 @@ private:
     std::ofstream outputFile;
     AVFormatContext* fmt_ctx = nullptr;
     AVStream* video_stream = nullptr;
-    int64_t pts = 0;
+    int64_t frame_no = 0;
 };
