@@ -62,7 +62,9 @@ namespace {
 
 }
 
-Encoder::Encoder() {
+Encoder::Encoder(FILE* ffmpeg_stream)
+	: ffmpeg_stream(ffmpeg_stream)
+{
 }
 
 Encoder::~Encoder() {
@@ -133,7 +135,7 @@ void Encoder::createEncoder(uint32_t width, uint32_t height, uint32_t bitrate, u
     initParams.encodeHeight = height;
     initParams.darWidth = width;
     initParams.darHeight = height;
-    initParams.frameRateNum = frameRate;
+    initParams.frameRateNum = 30;
     initParams.frameRateDen = 1;
     initParams.enablePTD = 1;
     initParams.encodeGUID = NV_ENC_CODEC_H264_GUID; // Use H.264 codec
@@ -150,7 +152,7 @@ void Encoder::createEncoder(uint32_t width, uint32_t height, uint32_t bitrate, u
     presetConfig.presetCfg.rcParams.constQP.qpIntra = 28;
     presetConfig.presetCfg.rcParams.constQP.qpInterP = 31;
     presetConfig.presetCfg.rcParams.constQP.qpInterB = 31;
-    presetConfig.presetCfg.gopLength = (uint32_t)25 * 2;        // or keep as preset
+    presetConfig.presetCfg.gopLength = (uint32_t)frameRate * 2;        // or keep as preset
     presetConfig.presetCfg.frameIntervalP = 1;               // single ref interval
 
     memcpy(initParams.encodeConfig, &presetConfig.presetCfg, sizeof(NV_ENC_CONFIG));
@@ -272,7 +274,9 @@ bool Encoder::processTextureWithNvenc()
     // Write the encoded data to file
     if (lockBitstreamData.bitstreamSizeInBytes > 0) {
         bool keyframe = (lockBitstreamData.pictureType == NV_ENC_PIC_TYPE_IDR);
-        writeFrameToMkv(lockBitstreamData.bitstreamBufferPtr, lockBitstreamData.bitstreamSizeInBytes, keyframe);
+        //writeFrameToMkv(lockBitstreamData.bitstreamBufferPtr, lockBitstreamData.bitstreamSizeInBytes, keyframe);
+		//writeRawFrame(lockBitstreamData.bitstreamBufferPtr, lockBitstreamData.bitstreamSizeInBytes);
+        fwrite(lockBitstreamData.bitstreamBufferPtr, 1, lockBitstreamData.bitstreamSizeInBytes, ffmpeg_stream);
     }
 
     // Unlock the bitstream
@@ -372,17 +376,39 @@ void Encoder::writeFrameToMkv(const void* data, size_t size, bool keyframe) {
 
     AVPacket* pkt = av_packet_alloc();
     if (!pkt) return;
-	const int64_t pts = (frame_no * 1000) / 25; // assuming 25 fps
+	//const int64_t pts = (frame_no * 1000) / 25; // assuming 25 fps
     pkt->data = (uint8_t*)data;
     pkt->size = static_cast<int>(size);
     pkt->stream_index = video_stream->index;
-    pkt->pts = pts;
-    pkt->dts = pts;
-    pkt->duration = 1000 / 25;
+    pkt->pts = frame_no;
+    pkt->dts = frame_no;
+    pkt->duration = 1; //1000 / 25;
     pkt->flags = keyframe ? AV_PKT_FLAG_KEY : 0;
     pkt->pos = -1;
 
     av_interleaved_write_frame(fmt_ctx, pkt);
     av_packet_free(&pkt);
     frame_no++;
+}
+
+void Encoder::writeRawFrame(const void* data, size_t size)
+{
+    if (outputRawFile.is_open()) {
+        outputRawFile.write(static_cast<const char*>(data), size);
+    }
+}
+
+void Encoder::setOutputFile(const std::string& filename)
+{
+    outputRawFile.open(filename, std::ios::binary);
+    if (!outputRawFile.is_open()) {
+        throw std::runtime_error("Failed to open output file: " + filename);
+    }
+}
+
+void Encoder::closeOutputRawFile()
+{
+    if (outputRawFile.is_open()) {
+        outputRawFile.close();
+    }
 }

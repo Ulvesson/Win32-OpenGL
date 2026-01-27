@@ -18,7 +18,7 @@ extern "C" {
 
 class Encoder {
 public:
-    Encoder();
+    explicit Encoder(FILE *ffmpeg_stream);
     ~Encoder();
 	void initializeEncoder();
 
@@ -30,7 +30,9 @@ public:
     bool processTextureWithNvenc();
     void openOutputFile(const std::string &filename, int width, int height, int fps);
     void writeFrameToMkv(const void* data, size_t size, bool keyframe);
-
+    void writeRawFrame(const void* data, size_t size);
+    void setOutputFile(const std::string& filename);
+    void closeOutputRawFile();
 private:
     void createOutputBitstreamBuffer();
 	void destroyOutputBitstreamBuffer();
@@ -47,7 +49,9 @@ private:
     NV_ENC_MAP_INPUT_RESOURCE mapInputRes = {};
 	NV_ENC_OUTPUT_PTR outputBitstreamBuffer = nullptr;
     std::ofstream outputFile;
+    std::ofstream outputRawFile;
     AVFormatContext* fmt_ctx = nullptr;
     AVStream* video_stream = nullptr;
     int64_t frame_no = 0;
+	FILE* ffmpeg_stream = nullptr;
 };

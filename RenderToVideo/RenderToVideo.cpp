@@ -21,19 +21,19 @@ extern "C" {
 
 namespace {
 #ifdef _DEBUG
-    void GLAPIENTRY
-        MessageCallback(GLenum source,
-            GLenum type,
-            GLuint id,
-            GLenum severity,
-            GLsizei length,
-            const GLchar* message,
-            const void* userParam)
-    {
-        fprintf(stderr, "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
-            (type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : ""),
-            type, severity, message);
-    }
+	void GLAPIENTRY
+		MessageCallback(GLenum source,
+			GLenum type,
+			GLuint id,
+			GLenum severity,
+			GLsizei length,
+			const GLchar* message,
+			const void* userParam)
+	{
+		fprintf(stderr, "GL CALLBACK: %s type = 0x%x, severity = 0x%x, message = %s\n",
+			(type == GL_DEBUG_TYPE_ERROR ? "** GL ERROR **" : ""),
+			type, severity, message);
+	}
 #endif
 
 	CUcontext createCudaContext() {
@@ -58,6 +58,17 @@ namespace {
 		std::cout << "CUDA context created successfully!" << std::endl;
 		return cuContext;
 	}
+
+    FILE* open_video(const std::string& filename, int width, int height) {
+        std::stringstream ss;
+        ss << "C:/Users/tommy/source/repos/3pp/ffmpeg-8.0-essentials_build/bin/ffmpeg.exe -loglevel error "
+            << " -framerate 30 -i - "
+            << " " << filename;
+
+        auto cmd = ss.str();
+        std::cout << "CMD: " << cmd << std::endl;
+        return _popen(cmd.c_str(), "wb");
+    }
 }
 
 int main(void)
@@ -109,20 +120,22 @@ int main(void)
         }
     }
 
-    constexpr int fps = 25;
-    Encoder encoder;
-    encoder.initializeEncoder();
-	encoder.createSession(cudaCtx);
-	encoder.createEncoder(width, height, 4000000, fps);
-	encoder.openOutputFile("output.mkv", width, height, fps);
-    engine engine(Projection);
-    int idx = 0;
-	int tail = 1 - no_buffers;
-
-    auto filename = "test.mkv";
+    auto filename = "output.mkv";
     if (std::filesystem::exists(filename)) {
         std::filesystem::remove(filename);
     }
+
+    constexpr int fps = 30;
+	auto stream = open_video(filename, width, height);
+	Encoder encoder(stream);
+    encoder.initializeEncoder();
+	encoder.createSession(cudaCtx);
+	encoder.createEncoder(width, height, 4000000, fps);
+	//encoder.openOutputFile("output.mkv", width, height, fps);
+    //encoder.setOutputFile("output.h264");
+    engine engine(Projection);
+    int idx = 0;
+	int tail = 1 - no_buffers;
 
     int frame_no = 0;
     auto started_at = std::chrono::high_resolution_clock::now();
@@ -163,7 +176,7 @@ int main(void)
         frame_no++;
         glfwPollEvents();
 
-        if (frame_no >= 250) { // 10 seconds at 25 fps
+        if (frame_no >= 600) {
             break;
 		}
     }
@@ -178,7 +191,9 @@ int main(void)
         return EXIT_FAILURE;
     }
 
-    //_pclose(video);
+	encoder.closeOutputRawFile();
+
+    _pclose(stream);
     glfwTerminate();
-    return 0;
+      return 0;
 }
