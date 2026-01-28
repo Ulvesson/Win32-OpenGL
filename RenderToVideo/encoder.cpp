@@ -20,46 +20,6 @@ namespace {
         nvenc.nvEncGetEncodeCaps(encoder, guidCodec, &capsParam, &v);
         return v;
     }
-
-    // Helper to find NAL units in Annex B format
-    void extract_sps_pps(const uint8_t* data, size_t size, std::vector<uint8_t>& out) {
-        size_t i = 0;
-        while (i + 4 < size) {
-            // Find start code
-            if (data[i] == 0x00 && data[i + 1] == 0x00 && data[i + 2] == 0x00 && data[i + 3] == 0x01) {
-                size_t nal_start = i + 4;
-                uint8_t nal_type = data[nal_start] & 0x1F;
-                // Find next start code
-                size_t next = nal_start;
-                while (next + 4 < size &&
-                    !(data[next] == 0x00 && data[next + 1] == 0x00 && data[next + 2] == 0x00 && data[next + 3] == 0x01)) {
-                    ++next;
-                }
-                size_t nal_end = next;
-                // If SPS or PPS, copy to output
-                if (nal_type == 7 || nal_type == 8) {
-                    out.insert(out.end(), &data[i], &data[nal_end]);
-                }
-                i = nal_end;
-            }
-            else {
-                ++i;
-            }
-        }
-    }
-
-    // Call this after encoding your first keyframe (IDR)
-    void set_sps_pps_extradata(AVStream* stream, const uint8_t* data, size_t size) {
-        std::vector<uint8_t> sps_pps;
-        extract_sps_pps(data, size, sps_pps);
-        if (!sps_pps.empty()) {
-            stream->codecpar->extradata = (uint8_t*)av_malloc(sps_pps.size() + AV_INPUT_BUFFER_PADDING_SIZE);
-            memcpy(stream->codecpar->extradata, sps_pps.data(), sps_pps.size());
-            memset(stream->codecpar->extradata + sps_pps.size(), 0, AV_INPUT_BUFFER_PADDING_SIZE);
-            stream->codecpar->extradata_size = (int)sps_pps.size();
-        }
-    }
-
 }
 
 Encoder::Encoder(FILE* ffmpeg_stream)
@@ -73,7 +33,6 @@ Encoder::~Encoder() {
         FreeLibrary(nvencDll);
         nvencDll = nullptr;
     }
-    closeOutputFile();
 }
 
 void Encoder::initializeEncoder()
@@ -261,8 +220,6 @@ bool Encoder::processTextureWithNvenc()
     // Write the encoded data to file
     if (lockBitstreamData.bitstreamSizeInBytes > 0) {
         bool keyframe = (lockBitstreamData.pictureType == NV_ENC_PIC_TYPE_IDR);
-        //writeFrameToMkv(lockBitstreamData.bitstreamBufferPtr, lockBitstreamData.bitstreamSizeInBytes, keyframe);
-		//writeRawFrame(lockBitstreamData.bitstreamBufferPtr, lockBitstreamData.bitstreamSizeInBytes);
         fwrite(lockBitstreamData.bitstreamBufferPtr, 1, lockBitstreamData.bitstreamSizeInBytes, ffmpeg_stream);
     }
 
@@ -297,106 +254,6 @@ void Encoder::destroyOutputBitstreamBuffer()
             std::cout << "Output bitstream buffer destroyed successfully!" << std::endl;
         }
         outputBitstreamBuffer = nullptr;
-    }
-}
-
-// Call this before encoding starts
-void Encoder::openOutputFile(const std::string& filename, int width, int height, int fps) {
-
-    avformat_alloc_output_context2(&fmt_ctx, nullptr, "matroska", filename.c_str());
-    if (!fmt_ctx) throw std::runtime_error("Could not allocate output context");
-
-    const AVCodec* codec = avcodec_find_encoder(AV_CODEC_ID_H264);
-    AVCodecContext* codec_ctx = avcodec_alloc_context3(codec);
-    codec_ctx->width = width;
-    codec_ctx->height = height;
-    codec_ctx->pix_fmt = AV_PIX_FMT_YUV420P;
-    codec_ctx->time_base = AVRational{1, fps};
-    codec_ctx->bit_rate = 4000000;
-
-    // Open codec to fill extradata
-    avcodec_open2(codec_ctx, codec, nullptr);
-
-    // Create stream and copy parameters
-    video_stream = avformat_new_stream(fmt_ctx, codec);
-    video_stream->time_base = AVRational{ 1, fps };
-    avcodec_parameters_from_context(video_stream->codecpar, codec_ctx);
-    video_stream->codecpar->codec_tag = 0;
-
-    // Clean up
-    avcodec_free_context(&codec_ctx);
-
-    if (!(fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
-        if (avio_open(&fmt_ctx->pb, filename.c_str(), AVIO_FLAG_WRITE) < 0)
-            throw std::runtime_error("Could not open output file");
-    }
-
-    frame_no = 0;
-}
-
-// Call this after encoding ends
-void Encoder::closeOutputFile() {
-    if (fmt_ctx) {
-        av_write_trailer(fmt_ctx);
-        if (!(fmt_ctx->oformat->flags & AVFMT_NOFILE)) {
-            avio_closep(&fmt_ctx->pb);
-        }
-        avformat_free_context(fmt_ctx);
-        fmt_ctx = nullptr;
-        video_stream = nullptr;
-    }
-}
-
-// Call this after each frame is encoded (in processTextureWithNvenc)
-void Encoder::writeFrameToMkv(const void* data, size_t size, bool keyframe) {
-    static bool first_key_frame = true;
-
-    if (first_key_frame && keyframe) {
-        set_sps_pps_extradata(video_stream, static_cast<const uint8_t*>(data), size);
-        if (avformat_write_header(fmt_ctx, nullptr) < 0)
-            throw std::runtime_error("Error occurred when writing header");
-        first_key_frame = false;
-	}
-
-	std::cout << "Writing frame, size: " << size << ", keyframe: " << keyframe << ", pts: " << frame_no << std::endl;
-    if (!fmt_ctx || !video_stream) return;
-
-    AVPacket* pkt = av_packet_alloc();
-    if (!pkt) return;
-	//const int64_t pts = (frame_no * 1000) / 25; // assuming 25 fps
-    pkt->data = (uint8_t*)data;
-    pkt->size = static_cast<int>(size);
-    pkt->stream_index = video_stream->index;
-    pkt->pts = frame_no;
-    pkt->dts = frame_no;
-    pkt->duration = 1; //1000 / 25;
-    pkt->flags = keyframe ? AV_PKT_FLAG_KEY : 0;
-    pkt->pos = -1;
-
-    av_interleaved_write_frame(fmt_ctx, pkt);
-    av_packet_free(&pkt);
-    frame_no++;
-}
-
-void Encoder::writeRawFrame(const void* data, size_t size)
-{
-    if (outputRawFile.is_open()) {
-        outputRawFile.write(static_cast<const char*>(data), size);
-    }
-}
-
-void Encoder::setOutputFile(const std::string& filename)
-{
-    outputRawFile.open(filename, std::ios::binary);
-    if (!outputRawFile.is_open()) {
-        throw std::runtime_error("Failed to open output file: " + filename);
-    }
-}
-
-void Encoder::closeOutputRawFile()
-{
-    if (outputRawFile.is_open()) {
-        outputRawFile.close();
     }
 }
 

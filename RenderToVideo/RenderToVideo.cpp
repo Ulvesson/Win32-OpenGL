@@ -8,10 +8,6 @@
 
 #include <cuda.h>
 
-extern "C" {
-#include <libavutil/log.h>
-}
-
 #include <chrono>
 #include <filesystem>
 #include <iostream>
@@ -99,7 +95,6 @@ int main(void)
     }
 
     auto cudaCtx = createCudaContext();
-    av_log_set_level(AV_LOG_INFO);
 
 #ifdef _DEBUG
     // During init, enable debug output
@@ -126,7 +121,7 @@ int main(void)
     }
 
     constexpr int fps = 30;
-	constexpr int max_frames = 60 * 12 * 30;
+	constexpr int max_frames = 60 * 1 * 30;
 	auto stream = open_video(filename, width, height);
 	Encoder encoder(stream);
     encoder.initializeEncoder();
@@ -136,8 +131,6 @@ int main(void)
         encoder.registerCudaResource(renderTargets[i].get_texture(), width, height);
     }
 	
-	//encoder.openOutputFile("output.mkv", width, height, fps);
-    //encoder.setOutputFile("output.h264");
     engine engine(Projection);
     int idx = 0;
 	int tail = 1 - no_buffers;
@@ -220,8 +213,6 @@ int main(void)
         std::cerr << "Failed to destroy CUDA context" << std::endl;
         return EXIT_FAILURE;
     }
-
-	encoder.closeOutputRawFile();
 
     _pclose(stream);
     glfwTerminate();
