@@ -110,7 +110,7 @@ int main(void)
     // Projection matrix: 45 deg Field of View, 4:3 ratio, display range: 0.1 unit <-> 100 units
     const glm::mat4 Projection = glm::perspective(glm::radians(45.0f), (float)width / (float)height, 0.1f, 100.0f);
 
-    constexpr int no_buffers = 1;
+    constexpr int no_buffers = 2;
     RenderTarget renderTargets[no_buffers];
 	GLsync fences[no_buffers];
 
@@ -126,7 +126,7 @@ int main(void)
     }
 
     constexpr int fps = 30;
-	constexpr int max_frames = 60 * 60 * 30; // 1 hour at 30 fps
+	constexpr int max_frames = 60 * 12 * 30;
 	auto stream = open_video(filename, width, height);
 	Encoder encoder(stream);
     encoder.initializeEncoder();
@@ -171,9 +171,8 @@ int main(void)
             }
 		}
 
-		//idx = (idx + 1) % no_buffers;
-		//tail = tail < 0 ? tail + 1 : (tail + 1) % no_buffers;
-        tail = idx; // = 0
+		idx = (idx + 1) % no_buffers;
+		tail = tail < 0 ? tail + 1 : (tail + 1) % no_buffers;
         frame_no++;
         glfwPollEvents();
 
@@ -181,6 +180,28 @@ int main(void)
             break;
 		}
     }
+
+	// Flush remaining frames
+    while (tail != idx) {
+        // Wait for the fence of the buffer to be encoded next
+        while (true) {
+            GLenum waitReturn = glClientWaitSync(fences[tail], GL_SYNC_FLUSH_COMMANDS_BIT, 6000);
+            if (waitReturn == GL_ALREADY_SIGNALED || waitReturn == GL_CONDITION_SATISFIED) {
+                break;
+            }
+        }
+        glDeleteSync(fences[tail]);
+        if (encoder.mapInput(renderTargets[tail].get_texture(), width, height)) {
+            if (!encoder.processTextureWithNvenc()) {
+                std::cerr << "Failed to encode frame " << frame_no << std::endl;
+            }
+            encoder.unmapInput();
+        }
+        else {
+            std::cerr << "Failed to map input texture for encoding" << std::endl;
+        }
+        tail = (tail + 1) % no_buffers;
+	}
 
     std::chrono::duration<double> elapsed_seconds = std::chrono::high_resolution_clock::now() - started_at;
     std::cout << "FPS: " << frame_no / elapsed_seconds.count() << std::endl;
