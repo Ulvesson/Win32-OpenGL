@@ -126,6 +126,7 @@ int main(void)
     }
 
     constexpr int fps = 30;
+	constexpr int max_frames = 60 * 60 * 30; // 1 hour at 30 fps
 	auto stream = open_video(filename, width, height);
 	Encoder encoder(stream);
     encoder.initializeEncoder();
@@ -176,7 +177,7 @@ int main(void)
         frame_no++;
         glfwPollEvents();
 
-        if (frame_no >= 600) {
+        if (frame_no >= max_frames) {
             break;
 		}
     }
