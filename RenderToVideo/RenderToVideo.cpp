@@ -112,7 +112,7 @@ int main(void)
 
     constexpr int no_buffers = 2;
     RenderTarget renderTargets[no_buffers];
-	GLsync fences[no_buffers];
+	GLsync fences[no_buffers] = { nullptr, nullptr };
 
     for (int i = 0; i < no_buffers; i++) {
         if (!renderTargets[i].init(width, height)) {
@@ -132,6 +132,10 @@ int main(void)
     encoder.initializeEncoder();
 	encoder.createSession(cudaCtx);
 	encoder.createEncoder(width, height, 4000000, fps);
+	for (int i = 0; i < no_buffers; i++) {
+        encoder.registerCudaResource(renderTargets[i].get_texture(), width, height);
+    }
+	
 	//encoder.openOutputFile("output.mkv", width, height, fps);
     //encoder.setOutputFile("output.h264");
     engine engine(Projection);
@@ -150,7 +154,7 @@ int main(void)
 
 		fences[idx] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		
-        if (tail >= 0) {
+        if (tail >= 0 && tail < no_buffers && fences[tail]) {
             // Wait for the fence of the buffer to be encoded next
             while (true) {
                 GLenum waitReturn = glClientWaitSync(fences[tail], GL_SYNC_FLUSH_COMMANDS_BIT, 6000);
@@ -159,15 +163,16 @@ int main(void)
                 }
             }
             glDeleteSync(fences[tail]);
+            fences[tail] = nullptr;
 
-            if (encoder.mapInput(renderTargets[tail].get_texture(), width, height)) {
+            if (encoder.mapInput(tail, width, height)) {
                 if (!encoder.processTextureWithNvenc()) {
                     std::cerr << "Failed to encode frame " << frame_no << std::endl;
-				}
-                encoder.unmapInput();
+                }
+                encoder.unmapInput(tail);
             }
             else {
-				std::cerr << "Failed to map input texture for encoding" << std::endl;
+                std::cerr << "Failed to map input texture for encoding" << std::endl;
             }
 		}
 
@@ -183,22 +188,25 @@ int main(void)
 
 	// Flush remaining frames
     while (tail != idx) {
-        // Wait for the fence of the buffer to be encoded next
-        while (true) {
-            GLenum waitReturn = glClientWaitSync(fences[tail], GL_SYNC_FLUSH_COMMANDS_BIT, 6000);
-            if (waitReturn == GL_ALREADY_SIGNALED || waitReturn == GL_CONDITION_SATISFIED) {
-                break;
+        if (tail >= 0 && tail < no_buffers && fences[tail]) {
+            // Wait for the fence of the buffer to be encoded next
+            while (true) {
+                GLenum waitReturn = glClientWaitSync(fences[tail], GL_SYNC_FLUSH_COMMANDS_BIT, 6000);
+                if (waitReturn == GL_ALREADY_SIGNALED || waitReturn == GL_CONDITION_SATISFIED) {
+                    break;
+                }
             }
-        }
-        glDeleteSync(fences[tail]);
-        if (encoder.mapInput(renderTargets[tail].get_texture(), width, height)) {
-            if (!encoder.processTextureWithNvenc()) {
-                std::cerr << "Failed to encode frame " << frame_no << std::endl;
+            glDeleteSync(fences[tail]);
+            fences[tail] = nullptr;
+            if (encoder.mapInput(tail, width, height)) {
+                if (!encoder.processTextureWithNvenc()) {
+                    std::cerr << "Failed to encode frame " << frame_no << std::endl;
+                }
+                encoder.unmapInput(tail);
             }
-            encoder.unmapInput();
-        }
-        else {
-            std::cerr << "Failed to map input texture for encoding" << std::endl;
+            else {
+                std::cerr << "Failed to map input texture for encoding" << std::endl;
+            }
         }
         tail = (tail + 1) % no_buffers;
 	}

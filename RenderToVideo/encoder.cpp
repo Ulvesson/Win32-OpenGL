@@ -169,35 +169,23 @@ void Encoder::createEncoder(uint32_t width, uint32_t height, uint32_t bitrate, u
 	createOutputBitstreamBuffer();
 }
 
-bool Encoder::mapInput(GLuint textureId, uint32_t width, uint32_t height)
+bool Encoder::mapInput(int idx, uint32_t width, uint32_t height)
 {
-    // Register the OpenGL texture with CUDA
-    cudaError_t cuErr = cudaGraphicsGLRegisterImage(
-        &cudaResource,
-        textureId,
-        GL_TEXTURE_2D,
-        cudaGraphicsRegisterFlagsReadOnly
-    );
-    if (cuErr != cudaSuccess) {
-        std::cerr << "cudaGraphicsGLRegisterImage failed: " << cudaGetErrorString(cuErr) << std::endl;
-        return false;
-    }
-
     // Map the resource for access by CUDA
-    cuErr = cudaGraphicsMapResources(1, &cudaResource, 0);
+    auto cuErr = cudaGraphicsMapResources(1, &cudaResources[idx], 0);
     if (cuErr != cudaSuccess) {
         std::cerr << "cudaGraphicsMapResources failed: " << cudaGetErrorString(cuErr) << std::endl;
-        cudaGraphicsUnregisterResource(cudaResource);
+        cudaGraphicsUnregisterResource(cudaResources[idx]);
         return false;
     }
 
     // Get the CUDA array from the mapped resource
     cudaArray_t cuArray = nullptr;
-    cuErr = cudaGraphicsSubResourceGetMappedArray(&cuArray, cudaResource, 0, 0);
+    cuErr = cudaGraphicsSubResourceGetMappedArray(&cuArray, cudaResources[idx], 0, 0);
     if (cuErr != cudaSuccess) {
         std::cerr << "cudaGraphicsSubResourceGetMappedArray failed: " << cudaGetErrorString(cuErr) << std::endl;
-        cudaGraphicsUnmapResources(1, &cudaResource, 0);
-        cudaGraphicsUnregisterResource(cudaResource);
+        cudaGraphicsUnmapResources(1, &cudaResources[idx], 0);
+        cudaGraphicsUnregisterResource(cudaResources[idx]);
         return false;
     }
 
@@ -214,8 +202,8 @@ bool Encoder::mapInput(GLuint textureId, uint32_t width, uint32_t height)
     NVENCSTATUS status = nvenc.nvEncRegisterResource(encoderSession, &regRes);
     if (status != NV_ENC_SUCCESS) {
         std::cerr << "nvEncRegisterResource failed: " << status << std::endl;
-        cudaGraphicsUnmapResources(1, &cudaResource, 0);
-        cudaGraphicsUnregisterResource(cudaResource);
+        cudaGraphicsUnmapResources(1, &cudaResources[idx], 0);
+        cudaGraphicsUnregisterResource(cudaResources[idx]);
         return false;
     }
 
@@ -227,21 +215,20 @@ bool Encoder::mapInput(GLuint textureId, uint32_t width, uint32_t height)
     if (status != NV_ENC_SUCCESS) {
         std::cerr << "nvEncMapInputResource failed: " << status << std::endl;
         nvenc.nvEncUnregisterResource(encoderSession, regRes.registeredResource);
-        cudaGraphicsUnmapResources(1, &cudaResource, 0);
-        cudaGraphicsUnregisterResource(cudaResource);
+        cudaGraphicsUnmapResources(1, &cudaResources[idx], 0);
+        cudaGraphicsUnregisterResource(cudaResources[idx]);
         return false;
     }
 
     return true;
 }
 
-void Encoder::unmapInput()
+void Encoder::unmapInput(int idx)
 {
     // Cleanup: unmap and unregister resources after encoding
     nvenc.nvEncUnmapInputResource(encoderSession, mapInputRes.mappedResource);
     nvenc.nvEncUnregisterResource(encoderSession, regRes.registeredResource);
-    cudaGraphicsUnmapResources(1, &cudaResource, 0);
-    cudaGraphicsUnregisterResource(cudaResource);
+    cudaGraphicsUnmapResources(1, &cudaResources[idx], 0);
 }
 
 bool Encoder::processTextureWithNvenc()
@@ -411,4 +398,19 @@ void Encoder::closeOutputRawFile()
     if (outputRawFile.is_open()) {
         outputRawFile.close();
     }
+}
+
+void Encoder::registerCudaResource(GLuint textureId, uint32_t width, uint32_t height)
+{
+        cudaGraphicsResource* cudaRes = nullptr;
+        cudaError_t cuErr = cudaGraphicsGLRegisterImage(
+            &cudaRes,
+            textureId,
+            GL_TEXTURE_2D,
+            cudaGraphicsRegisterFlagsReadOnly
+        );
+        if (cuErr != cudaSuccess) {
+            std::cerr << "cudaGraphicsGLRegisterImage failed for texture id: " << textureId << " : " << cudaGetErrorString(cuErr) << std::endl;
+        }
+        cudaResources.push_back(cudaRes);
 }

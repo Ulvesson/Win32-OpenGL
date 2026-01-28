@@ -15,6 +15,7 @@ extern "C" {
 
 #include <fstream>
 #include <string>
+#include <vector>
 
 class Encoder {
 public:
@@ -25,14 +26,15 @@ public:
     void createSession(CUcontext cudaContext);
 
     void createEncoder(uint32_t width, uint32_t height, uint32_t bitrate, uint32_t frameRate);
-    bool mapInput(GLuint textureId, uint32_t width, uint32_t height);
-	void unmapInput();
+    bool mapInput(int idx, uint32_t width, uint32_t height);
+	void unmapInput(int idx);
     bool processTextureWithNvenc();
     void openOutputFile(const std::string &filename, int width, int height, int fps);
     void writeFrameToMkv(const void* data, size_t size, bool keyframe);
     void writeRawFrame(const void* data, size_t size);
     void setOutputFile(const std::string& filename);
     void closeOutputRawFile();
+	void registerCudaResource(GLuint textureId, uint32_t width, uint32_t height);
 private:
     void createOutputBitstreamBuffer();
 	void destroyOutputBitstreamBuffer();
@@ -44,7 +46,7 @@ private:
     typedef NVENCSTATUS(NVENCAPI* PFN_NvEncodeAPICreateInstance)(NV_ENCODE_API_FUNCTION_LIST*);
     PFN_NvEncodeAPICreateInstance NvEncodeAPICreateInstance = nullptr;
 	void* encoderSession = nullptr;
-    cudaGraphicsResource* cudaResource = nullptr;
+	std::vector< cudaGraphicsResource*> cudaResources;
     NV_ENC_REGISTER_RESOURCE regRes = {};
     NV_ENC_MAP_INPUT_RESOURCE mapInputRes = {};
 	NV_ENC_OUTPUT_PTR outputBitstreamBuffer = nullptr;
