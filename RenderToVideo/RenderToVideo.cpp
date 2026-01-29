@@ -59,7 +59,7 @@ namespace {
         std::stringstream ss;
         ss << "C:/Users/tommy/source/repos/3pp/ffmpeg-8.0-essentials_build/bin/ffmpeg.exe -loglevel error "
             << " -framerate 30 -i - "
-            << " " << filename;
+            << " -c copy " << filename;
 
         auto cmd = ss.str();
         std::cout << "CMD: " << cmd << std::endl;
@@ -121,7 +121,7 @@ int main(void)
     }
 
     constexpr int fps = 30;
-	constexpr int max_frames = 60 * 1 * 30;
+	constexpr int max_frames = 60 * 5 * 30;
 	auto stream = open_video(filename, width, height);
 	Encoder encoder(stream);
     encoder.initializeEncoder();
