@@ -190,8 +190,10 @@ void Encoder::unmapInput(int idx)
     cudaGraphicsUnmapResources(1, &cudaResources[idx], 0);
 }
 
-bool Encoder::processTextureWithNvenc()
+bool Encoder::processTextureWithNvenc(uint64_t frame_no)
 {
+	constexpr uint64_t TIMEBASE = 30000; // 30kHz timebase for 30fps
+	constexpr uint64_t FRAMERATE = 30;
     NV_ENC_PIC_PARAMS picParams = {};
     picParams.version = NV_ENC_PIC_PARAMS_VER;
     picParams.inputBuffer = mapInputRes.mappedResource;
@@ -200,6 +202,11 @@ bool Encoder::processTextureWithNvenc()
     picParams.inputHeight = regRes.height;
     picParams.outputBitstream = outputBitstreamBuffer;
     picParams.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
+
+    // ADD TIMESTAMP CALCULATION 
+    picParams.inputTimeStamp = (frame_no * TIMEBASE) / FRAMERATE;
+    picParams.inputDuration = TIMEBASE / FRAMERATE;  // Duration in timebase units
+
     NVENCSTATUS status = nvenc.nvEncEncodePicture(encoderSession, &picParams);
     if (status != NV_ENC_SUCCESS) {
         std::cerr << "Failed to encode picture: " << status << std::endl;

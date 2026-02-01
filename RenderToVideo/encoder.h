@@ -21,7 +21,7 @@ public:
     void createEncoder(uint32_t width, uint32_t height, uint32_t bitrate, uint32_t frameRate);
     bool mapInput(int idx, uint32_t width, uint32_t height);
 	void unmapInput(int idx);
-    bool processTextureWithNvenc();
+    bool processTextureWithNvenc(uint64_t frame_no);
 	void registerCudaResource(GLuint textureId, uint32_t width, uint32_t height);
 private:
     void createOutputBitstreamBuffer();

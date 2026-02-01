@@ -58,8 +58,9 @@ namespace {
 
     FILE* open_video(const std::string& filename, int width, int height) {
         std::stringstream ss;
-        ss << "C:/Users/tommy/source/repos/3pp/ffmpeg-8.0-essentials_build/bin/ffmpeg.exe -loglevel error "
-            << " -framerate 30 -i - "
+        ss << "C:/Users/tommy/source/repos/3pp/ffmpeg-8.0-essentials_build/bin/ffmpeg.exe "
+            << "-loglevel debug "
+            << "-f h264 -i - "
             << " -c copy " << filename;
 
         auto cmd = ss.str();
@@ -180,7 +181,7 @@ int main(void)
             fences[tail] = nullptr;
 
             if (encoder.mapInput(tail, width, height)) {
-                if (!encoder.processTextureWithNvenc()) {
+                if (!encoder.processTextureWithNvenc(frame_no)) {
                     std::cerr << "Failed to encode frame " << frame_no << std::endl;
                 }
                 encoder.unmapInput(tail);
@@ -213,7 +214,7 @@ int main(void)
             glDeleteSync(fences[tail]);
             fences[tail] = nullptr;
             if (encoder.mapInput(tail, width, height)) {
-                if (!encoder.processTextureWithNvenc()) {
+                if (!encoder.processTextureWithNvenc(frame_no)) {
                     std::cerr << "Failed to encode frame " << frame_no << std::endl;
                 }
                 encoder.unmapInput(tail);
