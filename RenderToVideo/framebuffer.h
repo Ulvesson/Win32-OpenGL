@@ -8,6 +8,8 @@ public:
 	~FrameBuffer();
 	bool Init(int width, int height, bool depth_buffer = false);
 	void Bind();
+	void BindDraw();
+	void BindRead();
 	void Unbind();
 	GLuint GetTexture() const { return tex; }
 	GLenum checkNamedFramebufferStatus();
@@ -72,6 +74,16 @@ void FrameBuffer::Bind()
 {
 	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 	glViewport(0, 0, width, height);
+}
+
+void FrameBuffer::BindDraw()
+{
+	glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fbo);
+}
+
+void FrameBuffer::BindRead()
+{
+	glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
 }
 
 void FrameBuffer::Unbind()

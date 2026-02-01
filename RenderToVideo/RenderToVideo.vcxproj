@@ -158,7 +158,6 @@
     <ClCompile Include="engine.cpp" />
     <ClCompile Include="rendertarget.cpp" />
     <ClCompile Include="RenderToVideo.cpp" />
-    <ClCompile Include="yuv.cpp" />
   </ItemGroup>
   <ItemGroup>
     <None Include="packages.config" />
@@ -170,7 +169,6 @@
     <ClInclude Include="framebuffer.h" />
     <ClInclude Include="rendertarget.h" />
     <ClInclude Include="RenderToVideo.h" />
-    <ClInclude Include="yuv.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

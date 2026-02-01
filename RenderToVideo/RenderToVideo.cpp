@@ -1,6 +1,7 @@
 #include "engine.h"
 #include "encoder.h"
 #include "rendertarget.h"
+#include "framebuffer.h"
 
 #include <gl/glew.h>
 #include <GLFW/glfw3.h>
@@ -78,6 +79,9 @@ int main(void)
     if (!glfwInit())
         return -1;
 
+	// Make window invisible
+	glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
+
     /* Create a windowed mode window and its OpenGL context */
     window = glfwCreateWindow(width, height, "Hello World", NULL, NULL);
     if (!window)
@@ -107,14 +111,14 @@ int main(void)
 
     constexpr int no_buffers = 2;
     RenderTarget renderTargets[no_buffers];
-	RenderTarget flipRenderTarget[no_buffers];
+	FrameBuffer flipBuffer[no_buffers];
 	GLsync fences[no_buffers] = { nullptr, nullptr };
 
     for (int i = 0; i < no_buffers; i++) {
         if (!renderTargets[i].init(width, height)) {
             return EXIT_FAILURE;
         }
-        if (!flipRenderTarget[i].init(width, height)) {
+        if (!flipBuffer[i].Init(width, height)) {
             return EXIT_FAILURE;
         }
     }
@@ -132,7 +136,7 @@ int main(void)
 	encoder.createSession(cudaCtx);
 	encoder.createEncoder(width, height, 4000000, fps);
 	for (int i = 0; i < no_buffers; i++) {
-        encoder.registerCudaResource(renderTargets[i].get_texture(), width, height);
+        encoder.registerCudaResource(flipBuffer[i].GetTexture(), width, height);
     }
 	
     engine engine(Projection);
@@ -148,6 +152,19 @@ int main(void)
         renderTargets[idx].Begin();
         engine.render();
         renderTargets[idx].End();
+
+        
+		flipBuffer[idx].BindDraw();
+		renderTargets[idx].GetFrameBuffer()->BindRead();
+
+        // Render to FBO with flipped texture coordinates
+        // Flip during blit
+        glBlitFramebuffer(0, height, width, 0,  // src (flipped Y)
+            0, 0, width, height,   // dst (normal)
+            GL_COLOR_BUFFER_BIT, GL_NEAREST);
+
+		flipBuffer[idx].Unbind();
+		renderTargets[idx].GetFrameBuffer()->Unbind();
 
 		fences[idx] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
 		

@@ -13,6 +13,7 @@ public:
 	[[nodiscard]] bool init(GLsizei width, GLsizei height);
 	void Begin();
 	void End();
+	FrameBuffer* GetFrameBuffer() const;
 
 	void RenderTexture(int width, int height, GLuint texture = 0);
 	[[nodiscard]] GLuint get_texture() const;

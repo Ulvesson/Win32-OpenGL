@@ -139,6 +139,11 @@ void RenderTarget::End()
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
 
+FrameBuffer* RenderTarget::GetFrameBuffer() const
+{
+	return framebuffer;
+}
+
 void RenderTarget::RenderTexture(int width, int height, GLuint texture)
 {
 	glViewport(0, 0, width, height);
