@@ -167,6 +167,7 @@
     <ClInclude Include="cube.h" />
     <ClInclude Include="encoder.h" />
     <ClInclude Include="engine.h" />
+    <ClInclude Include="framebuffer.h" />
     <ClInclude Include="rendertarget.h" />
     <ClInclude Include="RenderToVideo.h" />
     <ClInclude Include="yuv.h" />

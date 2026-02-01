@@ -1,5 +1,6 @@
 #include "rendertarget.h"
-
+#define FRAMEBUFFER_IMPLEMENTATION
+#include "framebuffer.h"
 #include <iostream>
 
 namespace {
@@ -99,80 +100,39 @@ namespace {
 RenderTarget::~RenderTarget()
 {
 	Free();
+	delete framebuffer;
 }
 
 bool RenderTarget::init(GLsizei width, GLsizei height)
 {
-	if (fbo > 0) {
+	if (framebuffer != nullptr) {
 		return false;
 	}
+
+	framebuffer = new FrameBuffer();
+	framebuffer->Init(width, height, true);
 
 	this->width = width;
 	this->height = height;
 
-	glGenFramebuffers(1, &fbo);
-	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-	checkError();
-
-	glGenTextures(1, &tex);
-	glBindTexture(GL_TEXTURE_2D, tex);
-	glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA, width, height, 
-		0, GL_RGB, GL_UNSIGNED_BYTE, nullptr);
-	glGenerateTextureMipmap(tex);
-	checkError();
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-	glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-	checkError();
-	glBindTexture(GL_TEXTURE_2D, 0);
-
-	glGenRenderbuffers(1, &depth);
-	glBindRenderbuffer(GL_RENDERBUFFER, depth);
-	glRenderbufferStorage(GL_RENDERBUFFER, GL_DEPTH_COMPONENT, 
-		width, height);
-	glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, 
-		GL_RENDERBUFFER, depth);
-	checkError();
-
-	glFramebufferTexture(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, tex, 0);
-	checkError();
-
-	GLenum DrawBuffers[1]{ GL_COLOR_ATTACHMENT0 };
-	glDrawBuffers(1, DrawBuffers);
-	checkError();
-
-	auto status = glCheckNamedFramebufferStatus(fbo, GL_FRAMEBUFFER);
-
-	switch (status) {
-	case GL_FRAMEBUFFER_COMPLETE:
-		std::cout << "Framebuffer status: " << "GL_FRAMEBUFFER_COMPLETE" << std::endl;
-		break;
-	case GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT:
-		std::cerr << "Framebuffer status: " << "GL_FRAMEBUFFER_INCOMPLETE_ATTACHMENT" << std::endl;
-		break;
-	case GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER:
-		std::cerr << "Framebuffer status: " << "GL_FRAMEBUFFER_INCOMPLETE_DRAW_BUFFER" << std::endl;
-		break;
-	default:
-		std::cerr << "Framebuffer status: " << status << std::endl;
-	}
-
+	auto status = framebuffer->checkNamedFramebufferStatus();
 	glBindFramebuffer(GL_FRAMEBUFFER, 0);
 	return status == GL_FRAMEBUFFER_COMPLETE && InitTextureToScreen();
 }
 
 void RenderTarget::Begin()
 {
-	if (fbo == 0) {
+	if (!framebuffer->IsValid()) {
 		return;
 	}
 
-	glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+	framebuffer->Bind();
 	glViewport(0, 0, width, height);
 }
 
 void RenderTarget::End()
 {
-	if (fbo == 0) {
+	if (!framebuffer->IsValid()) {
 		return;
 	}
 
@@ -188,7 +148,7 @@ void RenderTarget::RenderTexture(int width, int height, GLuint texture)
 	checkError();
 	GLuint texLoc = glGetUniformLocation(program_id, "tex0");
 	glActiveTexture(GL_TEXTURE0);
-	glBindTexture(GL_TEXTURE_2D, texture == 0 ? tex : texture);
+	glBindTexture(GL_TEXTURE_2D, texture == 0 ? framebuffer->GetTexture() : texture);
 	glUniform1i(texLoc, 0);
 
 	glBindVertexArray(quad_vert_arr_id);
@@ -196,6 +156,14 @@ void RenderTarget::RenderTexture(int width, int height, GLuint texture)
 	glBindVertexArray(0);
 	glBindTexture(GL_TEXTURE_2D, 0);
 	glUseProgram(0);
+}
+
+GLuint RenderTarget::get_texture() const
+{
+	if (framebuffer != nullptr && framebuffer->IsValid()) {
+		return framebuffer->GetTexture();
+	}
+	return 0;
 }
 
 bool RenderTarget::InitTextureToScreen()
@@ -224,9 +192,6 @@ bool RenderTarget::InitTextureToScreen()
 void RenderTarget::Free()
 {
 	End();
-	glDeleteFramebuffers(1, &fbo);
-	glDeleteTextures(1, &tex);
-	glDeleteRenderbuffers(1, &depth);
 	glDeleteBuffers(1, &quad_vert_buffer_id);
 	glDeleteVertexArrays(1, &quad_vert_arr_id);
 }

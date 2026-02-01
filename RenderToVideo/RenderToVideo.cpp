@@ -107,10 +107,14 @@ int main(void)
 
     constexpr int no_buffers = 2;
     RenderTarget renderTargets[no_buffers];
+	RenderTarget flipRenderTarget[no_buffers];
 	GLsync fences[no_buffers] = { nullptr, nullptr };
 
     for (int i = 0; i < no_buffers; i++) {
         if (!renderTargets[i].init(width, height)) {
+            return EXIT_FAILURE;
+        }
+        if (!flipRenderTarget[i].init(width, height)) {
             return EXIT_FAILURE;
         }
     }
@@ -121,7 +125,7 @@ int main(void)
     }
 
     constexpr int fps = 30;
-	constexpr int max_frames = 60 * 5 * 30;
+	constexpr int max_frames = 60 * 1 * 30;
 	auto stream = open_video(filename, width, height);
 	Encoder encoder(stream);
     encoder.initializeEncoder();

@@ -56,5 +56,8 @@
     <ClInclude Include="RenderToVideo.h">
       <Filter>Header Files</Filter>
     </ClInclude>
+    <ClInclude Include="framebuffer.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>
