@@ -16,26 +16,31 @@ public:
     explicit Encoder(FILE *ffmpeg_stream);
     ~Encoder();
 
-	void initializeEncoder();
+    void initializeEncoder();
     void createSession(CUcontext cudaContext);
     void createEncoder(uint32_t width, uint32_t height, uint32_t bitrate, uint32_t frameRate);
     bool mapInput(int idx, uint32_t width, uint32_t height);
-	void unmapInput(int idx);
+    void unmapInput(int idx);
     bool processTextureWithNvenc(uint64_t frame_no);
-	void registerCudaResource(GLuint textureId, uint32_t width, uint32_t height);
+    void registerCudaResource(GLuint textureId, uint32_t width, uint32_t height);
+    void flushPendingFrames();
 private:
     void createOutputBitstreamBuffer();
-	void destroyOutputBitstreamBuffer();
+    void destroyOutputBitstreamBuffer();
 
 private:
     HMODULE nvencDll = nullptr;
     NV_ENCODE_API_FUNCTION_LIST nvenc = {};
     typedef NVENCSTATUS(NVENCAPI* PFN_NvEncodeAPICreateInstance)(NV_ENCODE_API_FUNCTION_LIST*);
     PFN_NvEncodeAPICreateInstance NvEncodeAPICreateInstance = nullptr;
-	void* encoderSession = nullptr;
-	std::vector< cudaGraphicsResource*> cudaResources;
+    void* encoderSession = nullptr;
+    std::vector< cudaGraphicsResource*> cudaResources;
     NV_ENC_REGISTER_RESOURCE regRes = {};
     NV_ENC_MAP_INPUT_RESOURCE mapInputRes = {};
-	NV_ENC_OUTPUT_PTR outputBitstreamBuffer = nullptr;
     FILE* ffmpeg_stream = nullptr;
+private:
+    static constexpr int BUFFER_QUEUE_SIZE = 2;
+    NV_ENC_OUTPUT_PTR outputBuffers[BUFFER_QUEUE_SIZE] = {nullptr};
+    int encodeIdx = 0;
+    int retrieveIdx = -1;   // Start with -1 to indicate no frames have been encoded yet
 };

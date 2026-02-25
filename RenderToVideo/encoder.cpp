@@ -28,10 +28,17 @@ Encoder::Encoder(FILE* ffmpeg_stream)
 }
 
 Encoder::~Encoder() {
-	destroyOutputBitstreamBuffer();
+    flushPendingFrames();  // Flush before destroying buffers
+    destroyOutputBitstreamBuffer();
+    
     if (nvencDll) {
         FreeLibrary(nvencDll);
         nvencDll = nullptr;
+    }
+    
+    if (ffmpeg_stream) {
+        fflush(ffmpeg_stream);
+        // Don't close - caller owns the FILE*
     }
 }
 
@@ -200,7 +207,7 @@ bool Encoder::processTextureWithNvenc(uint64_t frame_no)
     picParams.bufferFmt = NV_ENC_BUFFER_FORMAT_ABGR;
     picParams.inputWidth = regRes.width;
     picParams.inputHeight = regRes.height;
-    picParams.outputBitstream = outputBitstreamBuffer;
+    picParams.outputBitstream = outputBuffers[encodeIdx];
     picParams.pictureStruct = NV_ENC_PIC_STRUCT_FRAME;
 
     // ADD TIMESTAMP CALCULATION 
@@ -213,10 +220,18 @@ bool Encoder::processTextureWithNvenc(uint64_t frame_no)
         return false;
     }
 
+	encodeIdx = (encodeIdx + 1) % BUFFER_QUEUE_SIZE; // Move to the next buffer for encoding
+
+    if (retrieveIdx < 0) {
+		// Wait for the first encoded frame to be available
+		retrieveIdx = (retrieveIdx + 1) % BUFFER_QUEUE_SIZE;
+        return true;
+    }
+
     // Lock the bitstream to access encoded data
     NV_ENC_LOCK_BITSTREAM lockBitstreamData = {};
     lockBitstreamData.version = NV_ENC_LOCK_BITSTREAM_VER;
-    lockBitstreamData.outputBitstream = outputBitstreamBuffer;
+    lockBitstreamData.outputBitstream = outputBuffers[retrieveIdx];
     lockBitstreamData.doNotWait = false;
     status = nvenc.nvEncLockBitstream(encoderSession, &lockBitstreamData);
     if (status != NV_ENC_SUCCESS) {
@@ -231,36 +246,41 @@ bool Encoder::processTextureWithNvenc(uint64_t frame_no)
     }
 
     // Unlock the bitstream
-    nvenc.nvEncUnlockBitstream(encoderSession, outputBitstreamBuffer);
+    nvenc.nvEncUnlockBitstream(encoderSession, outputBuffers[retrieveIdx]);
+	retrieveIdx = (retrieveIdx + 1) % BUFFER_QUEUE_SIZE; // Move to the next buffer for retrieval
 	return true;
 }
 
-void Encoder::createOutputBitstreamBuffer()
-{
-    NV_ENC_CREATE_BITSTREAM_BUFFER createBitstreamBuffer = {};
-    createBitstreamBuffer.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
+void Encoder::createOutputBitstreamBuffer() {
+    for (int i = 0; i < BUFFER_QUEUE_SIZE; i++) {
+        NV_ENC_CREATE_BITSTREAM_BUFFER createBitstreamBuffer = {};
+        createBitstreamBuffer.version = NV_ENC_CREATE_BITSTREAM_BUFFER_VER;
 
-    NVENCSTATUS status = nvenc.nvEncCreateBitstreamBuffer(encoderSession, &createBitstreamBuffer);
-    if (status != NV_ENC_SUCCESS) {
-        std::cerr << "Failed to create output bitstream buffer: " << status << std::endl;
-        throw std::runtime_error("Failed to create output bitstream buffer");
+        NVENCSTATUS status = nvenc.nvEncCreateBitstreamBuffer(
+            encoderSession, &createBitstreamBuffer);
+
+        if (status != NV_ENC_SUCCESS) {
+            throw std::runtime_error("Failed to create bitstream buffer");
+        }
+
+        outputBuffers[i] = createBitstreamBuffer.bitstreamBuffer;
     }
-
-    // Store the created bitstream buffer handle for later use
-    outputBitstreamBuffer = createBitstreamBuffer.bitstreamBuffer;
-    std::cout << "Output bitstream buffer created successfully!" << std::endl;
 }
 
 void Encoder::destroyOutputBitstreamBuffer()
 {
-    if (outputBitstreamBuffer) {
-        NVENCSTATUS status = nvenc.nvEncDestroyBitstreamBuffer(encoderSession, outputBitstreamBuffer);
-        if (status != NV_ENC_SUCCESS) {
-            std::cerr << "Failed to destroy output bitstream buffer: " << status << std::endl;
-        } else {
-            std::cout << "Output bitstream buffer destroyed successfully!" << std::endl;
+    // Destroy all buffers in the queue
+    for (int i = 0; i < BUFFER_QUEUE_SIZE; i++) {
+        if (outputBuffers[i]) {
+            NVENCSTATUS status = nvenc.nvEncDestroyBitstreamBuffer(encoderSession, outputBuffers[i]);
+            if (status != NV_ENC_SUCCESS) {
+                std::cerr << "Failed to destroy output bitstream buffer " << i << ": " << status << std::endl;
+            }
+            else {
+                std::cout << "Output bitstream buffer " << i << " destroyed successfully!" << std::endl;
+            }
+            outputBuffers[i] = nullptr;
         }
-        outputBitstreamBuffer = nullptr;
     }
 }
 
@@ -277,4 +297,49 @@ void Encoder::registerCudaResource(GLuint textureId, uint32_t width, uint32_t he
             std::cerr << "cudaGraphicsGLRegisterImage failed for texture id: " << textureId << " : " << cudaGetErrorString(cuErr) << std::endl;
         }
         cudaResources.push_back(cudaRes);
+}
+
+void Encoder::flushPendingFrames() {
+    if (!encoderSession || !ffmpeg_stream) {
+        return;
+    }
+
+    std::cout << "Flushing pending frames..." << std::endl;
+
+    // Retrieve all frames still in the pipeline
+    for (int i = 0; i < BUFFER_QUEUE_SIZE; i++) {
+        if (!outputBuffers[i]) {
+            continue;  // Buffer not created
+        }
+
+        NV_ENC_LOCK_BITSTREAM lockBitstream = {};
+        lockBitstream.version = NV_ENC_LOCK_BITSTREAM_VER;
+        lockBitstream.outputBitstream = outputBuffers[i];
+        lockBitstream.doNotWait = false;  // Block until ready
+
+        NVENCSTATUS status = nvenc.nvEncLockBitstream(encoderSession, &lockBitstream);
+        
+        if (status == NV_ENC_SUCCESS) {
+            if (lockBitstream.bitstreamSizeInBytes > 0) {
+                std::cout << "Flushing buffer " << i << ", size: " 
+                         << lockBitstream.bitstreamSizeInBytes << " bytes" << std::endl;
+                
+                fwrite(lockBitstream.bitstreamBufferPtr, 1, 
+                       lockBitstream.bitstreamSizeInBytes, ffmpeg_stream);
+                fflush(ffmpeg_stream);
+            }
+            
+            nvenc.nvEncUnlockBitstream(encoderSession, outputBuffers[i]);
+        } 
+        else if (status == NV_ENC_ERR_INVALID_PARAM) {
+            // Buffer may be empty, skip
+            continue;
+        }
+        else {
+            std::cerr << "Failed to lock bitstream buffer " << i 
+                     << " during flush: " << status << std::endl;
+        }
+    }
+
+    std::cout << "Flush complete" << std::endl;
 }

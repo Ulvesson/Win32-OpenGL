@@ -226,6 +226,9 @@ int main(void)
         tail = (tail + 1) % no_buffers;
 	}
 
+    // After encoding loop
+    encoder.flushPendingFrames();
+
     std::chrono::duration<double> elapsed_seconds = std::chrono::high_resolution_clock::now() - started_at;
     std::cout << "FPS: " << frame_no / elapsed_seconds.count() << std::endl;
 	std::cout << "Total frames: " << frame_no << std::endl;
